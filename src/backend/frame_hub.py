@@ -269,7 +269,7 @@ class FrameHub:
 # === Module-level instance ===
 
 from robot_service import robot_service
-from settings_service import settings_service
+import settings_service
 
 frame_hub = FrameHub(robot_service.get_front_camera_image)
 

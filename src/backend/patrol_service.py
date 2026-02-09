@@ -415,7 +415,7 @@ class PatrolService:
                 verified = []
                 for s in streams:
                     s_key = s["rtsp_url"].split(mediamtx_for_jps)[-1].lstrip("/")
-                    ready = relay_service_client.wait_for_stream(s_key, timeout=30)
+                    ready = relay_service_client.wait_for_stream(s_key, timeout=60)
                     if ready:
                         verified.append(s)
                     else:
