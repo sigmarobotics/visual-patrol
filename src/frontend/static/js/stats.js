@@ -118,25 +118,36 @@ export async function loadStats() {
     }
 }
 
+function toMillions(n) {
+    return (n / 1_000_000).toFixed(2);
+}
+
 function updateStatsSummary(data) {
     const totalInput = data.reduce((sum, d) => sum + d.input, 0);
     const totalOutput = data.reduce((sum, d) => sum + d.output, 0);
     const totalAll = data.reduce((sum, d) => sum + d.total, 0);
+
+    const inputCost = (totalInput / 1_000_000 * 0.5).toFixed(2);
+    const outputCost = (totalOutput / 1_000_000 * 3).toFixed(2);
+    const totalCost = (parseFloat(inputCost) + parseFloat(outputCost)).toFixed(2);
 
     const summaryEl = document.getElementById('stats-summary');
     if (summaryEl) {
         summaryEl.innerHTML = `
             <div class="stat-item">
                 <span class="stat-label">Input Tokens</span>
-                <span class="stat-value" style="color: #28a745;">${totalInput.toLocaleString()}</span>
+                <span class="stat-value" style="color: #28a745;">${toMillions(totalInput)} M</span>
+                <span style="display:block; font-size:11px; color:var(--text-muted); margin-top:2px;">$0.50 / 1M &rarr; $${inputCost}</span>
             </div>
             <div class="stat-item">
                 <span class="stat-label">Output Tokens</span>
-                <span class="stat-value" style="color: #e67e22;">${totalOutput.toLocaleString()}</span>
+                <span class="stat-value" style="color: #e67e22;">${toMillions(totalOutput)} M</span>
+                <span style="display:block; font-size:11px; color:var(--text-muted); margin-top:2px;">$3.00 / 1M &rarr; $${outputCost}</span>
             </div>
             <div class="stat-item">
                 <span class="stat-label">Total Tokens</span>
-                <span class="stat-value" style="color: #007bff;">${totalAll.toLocaleString()}</span>
+                <span class="stat-value" style="color: #007bff;">${toMillions(totalAll)} M</span>
+                <span style="display:block; font-size:11px; color:var(--text-muted); margin-top:2px;">Est. Cost: $${totalCost}</span>
             </div>
         `;
     }
@@ -150,9 +161,9 @@ function renderChart(data) {
     }
 
     const labels = data.map(d => d.date);
-    const inputValues = data.map(d => d.input);
-    const outputValues = data.map(d => d.output);
-    const totalValues = data.map(d => d.total);
+    const inputValues = data.map(d => d.input / 1_000_000);
+    const outputValues = data.map(d => d.output / 1_000_000);
+    const totalValues = data.map(d => d.total / 1_000_000);
 
     tokenChart = new Chart(ctx, {
         type: 'line',
@@ -219,9 +230,16 @@ function renderChart(data) {
                     grid: { color: 'rgba(0, 0, 0, 0.08)' }
                 },
                 y: {
+                    title: {
+                        display: true,
+                        text: 'Million Tokens',
+                        color: '#555',
+                        font: { family: "'Chakra Petch', sans-serif", size: 11, weight: 600 }
+                    },
                     ticks: {
                         color: '#555',
-                        font: { family: "'IBM Plex Mono', monospace", size: 10 }
+                        font: { family: "'IBM Plex Mono', monospace", size: 10 },
+                        callback: v => v.toFixed(2) + ' M'
                     },
                     grid: { color: 'rgba(0, 0, 0, 0.08)' },
                     beginAtZero: true
@@ -243,7 +261,10 @@ function renderChart(data) {
                     cornerRadius: 4,
                     padding: 12,
                     titleFont: { family: "'Chakra Petch', sans-serif", size: 11 },
-                    bodyFont: { family: "'IBM Plex Mono', monospace", size: 12 }
+                    bodyFont: { family: "'IBM Plex Mono', monospace", size: 12 },
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} M`
+                    }
                 }
             }
         }

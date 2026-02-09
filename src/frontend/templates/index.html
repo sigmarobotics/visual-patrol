@@ -29,7 +29,7 @@
                 <button class="tab-btn active" onclick="switchTab('control')">Control</button>
                 <button class="tab-btn" onclick="switchTab('history')">History</button>
                 <button class="tab-btn" onclick="switchTab('reports')">Reports</button>
-                <button class="tab-btn" onclick="switchTab('stats')">Stats</button>
+                <button class="tab-btn" onclick="switchTab('stats')">Tokens</button>
                 <button class="tab-btn" onclick="switchTab('settings')">Settings</button>
             </div>
 
@@ -407,6 +407,7 @@
                 </div>
 
                 <div class="glass-panel" style="position: relative; height: 55vh; width: 100%;">
+                    <span style="position: absolute; top: 8px; right: 12px; font-size: 11px; color: var(--text-muted); z-index: 1;">Unit: Million Tokens</span>
                     <canvas id="tokenUsageChart"></canvas>
                 </div>
             </div>
@@ -453,10 +454,6 @@
                             <label for="setting-turbo-mode" style="margin: 0; cursor: pointer;">Enable Turbo Mode (Async Analysis)</label>
                         </div>
                         <div class="form-group" style="flex-direction: row; align-items: center; gap: 12px;">
-                            <input type="checkbox" id="setting-enable-video" style="width: auto;">
-                            <label for="setting-enable-video" style="margin: 0; cursor: pointer;">Enable Video Recording</label>
-                        </div>
-                        <div class="form-group" style="flex-direction: row; align-items: center; gap: 12px;">
                             <input type="checkbox" id="setting-enable-idle-stream" style="width: auto;">
                             <label for="setting-enable-idle-stream" style="margin: 0; cursor: pointer;">Continuous Camera Stream</label>
                         </div>
@@ -483,7 +480,6 @@
                 <div id="settings-tab-gemini" class="settings-tab-content">
                     <div class="settings-column">
                         <h3 class="settings-section-title">Gemini AI Settings</h3>
-
                         <div class="form-group">
                             <label>API Key</label>
                             <input type="password" id="setting-api-key" placeholder="Enter Gemini API Key">
@@ -492,25 +488,40 @@
                             <label>Model</label>
                             <input type="text" id="setting-model" value="gemini-1.5-flash">
                         </div>
+
+                        <div class="section-divider" style="margin: 8px 0; border-top: 1px solid var(--border-subtle);"></div>
+                        <h3 class="settings-section-title">System Prompt</h3>
                         <div class="form-group">
-                            <label>System Role / Prompt</label>
                             <textarea id="setting-role" rows="5" placeholder="Define the AI's behavior and context..."></textarea>
+                        </div>
+
+                        <div class="section-divider" style="margin: 8px 0; border-top: 1px solid var(--border-subtle);"></div>
+                        <h3 class="settings-section-title">Single Run Report Prompt</h3>
+                        <div class="form-group">
+                            <textarea id="setting-report-prompt" rows="4" placeholder="Custom instructions for single patrol report generation..."></textarea>
+                        </div>
+
+                        <div class="section-divider" style="margin: 8px 0; border-top: 1px solid var(--border-subtle);"></div>
+                        <h3 class="settings-section-title">Telegram Message Prompt</h3>
+                        <div class="form-group">
+                            <textarea id="setting-telegram-message-prompt" rows="4" placeholder="Prompt for generating concise Telegram notification messages..."></textarea>
+                        </div>
+
+                        <div class="section-divider" style="margin: 8px 0; border-top: 1px solid var(--border-subtle);"></div>
+                        <h3 class="settings-section-title">Multi-run Report Prompt</h3>
+                        <div class="form-group">
+                            <textarea id="setting-multiday-report-prompt" rows="4" placeholder="Custom instructions for aggregated report generation..."></textarea>
+                        </div>
+
+                        <div class="section-divider" style="margin: 8px 0; border-top: 1px solid var(--border-subtle);"></div>
+                        <h3 class="settings-section-title">Video Analysis</h3>
+                        <div class="form-group" style="flex-direction: row; align-items: center; gap: 12px;">
+                            <input type="checkbox" id="setting-enable-video" style="width: auto;">
+                            <label for="setting-enable-video" style="margin: 0; cursor: pointer;">Enable Video Recording</label>
                         </div>
                         <div class="form-group">
                             <label>Video Analysis Prompt</label>
                             <textarea id="setting-video-prompt" rows="4" placeholder="Instructions for video analysis..."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Report Prompt (Single Run)</label>
-                            <textarea id="setting-report-prompt" rows="4" placeholder="Custom instructions for single patrol report generation..."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Multiday Report Prompt (Date Range)</label>
-                            <textarea id="setting-multiday-report-prompt" rows="4" placeholder="Custom instructions for aggregated report generation..."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Telegram Message Prompt</label>
-                            <textarea id="setting-telegram-message-prompt" rows="4" placeholder="Prompt for generating concise Telegram notification messages..."></textarea>
                         </div>
                     </div>
                 </div>

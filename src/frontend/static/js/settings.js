@@ -199,11 +199,17 @@ export async function testEdgeAI() {
     resultsEl.style.display = 'block';
     const streamSuffix = streamSource === 'external_rtsp' ? 'external' : 'camera';
     const rtspUrl = `rtsp://${jetsonHost}:8555/${state.selectedRobotId}/${streamSuffix}`;
+
+    // Build alert rules table
     resultsEl.innerHTML =
         `<div style="margin-bottom:8px; padding:8px 10px; background:rgba(0,200,180,0.08); border:1px solid var(--cyan-dim); border-radius:4px; font-size:12px;">` +
         `請用VLC打開這個網址: <code style="user-select:all; color:var(--cyan-glow); font-weight:bold;">${escapeHtml(rtspUrl)}</code>` +
         `</div>` +
-        `<div id="test-ws-log"></div>`;
+        `<table class="data-table" id="test-alert-rules-table" style="width:100%; font-size:12px;">` +
+        `<thead><tr><th style="text-align:left;">Alert Rule</th><th style="width:80px; text-align:center;">Count</th><th style="width:160px; text-align:center;">Last Triggered</th></tr></thead>` +
+        `<tbody>` +
+        rules.map(r => `<tr data-rule="${escapeHtml(r)}"><td>${escapeHtml(r)}</td><td style="text-align:center;">0</td><td style="text-align:center; color:var(--text-muted);">-</td></tr>`).join('') +
+        `</tbody></table>`;
 
     try {
         const res = await fetch(`/api/${state.selectedRobotId}/test_edge_ai/start`, {
@@ -225,9 +231,7 @@ export async function testEdgeAI() {
     btn.classList.replace('btn-premium', 'btn-danger');
     statusEl.textContent = 'Starting relay...';
 
-    let lastMsgCount = 0;
-
-    // Poll for status + WS messages every 2s
+    // Poll for status every 2s, update alert rules table
     _testStatusPollId = setInterval(async () => {
         try {
             const res = await fetch(`/api/${state.selectedRobotId}/test_edge_ai/status`);
@@ -243,28 +247,27 @@ export async function testEdgeAI() {
             }
 
             const wsLabel = status.ws_connected ? 'WS Connected' : 'WS Connecting...';
-            statusEl.textContent = `${wsLabel} | Messages: ${(status.ws_messages || []).length} | Alerts: ${status.alert_count}`;
+            statusEl.textContent = `${wsLabel} | Alerts: ${status.alert_count}`;
             if (status.error) statusEl.textContent += ` | ${status.error}`;
 
-            // Append new WS messages
-            const logEl = document.getElementById('test-ws-log');
-            const msgs = status.ws_messages || [];
-            if (logEl && msgs.length > lastMsgCount) {
-                const newMsgs = msgs.slice(lastMsgCount);
-                for (const m of newMsgs) {
-                    const div = document.createElement('div');
-                    const isAlert = m.event && (m.event.rule_string || m.event.alert || m.event.rule);
-                    div.style.cssText = isAlert
-                        ? 'margin-bottom:4px; padding:4px 8px; background:rgba(231,76,60,0.1); border-left:3px solid var(--coral); border-radius:3px; font-size:12px; font-family:monospace; word-break:break-all;'
-                        : 'margin-bottom:4px; padding:4px 8px; background:var(--bg-secondary); border-left:3px solid var(--border-subtle); border-radius:3px; font-size:12px; font-family:monospace; word-break:break-all;';
-                    const content = m.event ? JSON.stringify(m.event) : (m.raw || '?');
-                    div.innerHTML =
-                        `<span style="color:var(--text-muted); margin-right:6px;">${escapeHtml(m.timestamp)}</span>` +
-                        `<span>${escapeHtml(content)}</span>`;
-                    logEl.appendChild(div);
-                }
-                lastMsgCount = msgs.length;
-                resultsEl.scrollTop = resultsEl.scrollHeight;
+            // Update alert rules table from alerts list
+            const alerts = status.alerts || [];
+            const table = document.getElementById('test-alert-rules-table');
+            if (table) {
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach(row => {
+                    const rule = row.getAttribute('data-rule');
+                    // Find all alerts matching this rule
+                    const matching = alerts.filter(a => a.rule === rule);
+                    const count = matching.length;
+                    const lastTime = count > 0 ? matching[matching.length - 1].timestamp : null;
+                    const cells = row.querySelectorAll('td');
+                    cells[1].textContent = count;
+                    if (lastTime) {
+                        cells[2].textContent = lastTime;
+                        cells[2].style.color = 'var(--coral)';
+                    }
+                });
             }
         } catch (e) { /* ignore */ }
     }, 2000);

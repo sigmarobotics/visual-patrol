@@ -115,10 +115,11 @@ export async function loadHistory() {
             const statusColor = run.status === 'Completed' ? '#28a745' : (run.status === 'Running' ? '#007bff' : '#dc3545');
             const robotName = getRobotName(run.robot_id);
             const robotTag = robotName ? `<span class="robot-tag">${escapeHtml(robotName)}</span>` : '';
+            const videoIcon = run.video_path ? '<span title="Has video recording" style="margin-left:6px; font-size:0.85rem; opacity:0.7;">&#127909;</span>' : '';
 
             card.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <span style="font-weight:bold; font-size:1.1rem; color:#1a1a1a;">Patrol Run #${run.id} ${robotTag}</span>
+                    <span style="font-weight:bold; font-size:1.1rem; color:#1a1a1a;">Run #${run.id} ${robotTag}${videoIcon}</span>
                     <span style="font-size:0.8rem; background:${statusColor}; color:#fff; padding:2px 8px; border-radius:4px; font-weight:bold;">${escapeHtml(run.status)}</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:#555;">

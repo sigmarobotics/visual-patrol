@@ -19,12 +19,10 @@ import atexit
 import logging
 import os
 import signal
-import socket
 import subprocess
 import sys
 import threading
 import time
-from urllib.parse import urlparse
 
 from flask import Flask, request, jsonify
 
@@ -163,13 +161,24 @@ class RelayServiceManager:
         return result
 
     def wait_for_stream(self, key, timeout=15):
-        """Check if a relay's stream is ready on mediamtx via RTSP DESCRIBE."""
-        with self._lock:
-            entry = self._relays.get(key)
-        if not entry:
-            return False
+        """Wait until the relay has produced at least one frame (stream is live on mediamtx)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                entry = self._relays.get(key)
+            if not entry:
+                return False
+            if entry.process.poll() is not None:
+                # ffmpeg exited — stream won't come up
+                time.sleep(1)
+                continue
+            if entry.last_frame_count > 0:
+                logger.info(f"Stream ready: {key} (frame={entry.last_frame_count})")
+                return True
+            time.sleep(1)
 
-        return _wait_for_stream(entry.rtsp_url, max_wait=timeout)
+        logger.warning(f"Stream not ready after {timeout}s: {key}")
+        return False
 
     # --- Internal ---
 
@@ -321,44 +330,6 @@ class RelayServiceManager:
                 except Exception as e:
                     logger.error(f"Failed to restart relay {entry.key}: {e}")
 
-
-# --- Stream readiness check ---
-
-
-def _wait_for_stream(rtsp_url, max_wait=20):
-    """Poll RTSP URL via DESCRIBE until the stream is ready on mediamtx."""
-    parsed = urlparse(rtsp_url)
-    host = parsed.hostname
-    port = parsed.port or 8554
-    path = parsed.path or "/"
-
-    deadline = time.time() + max_wait
-    attempt = 0
-
-    while time.time() < deadline:
-        attempt += 1
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(3)
-            s.connect((host, port))
-            describe = (
-                f"DESCRIBE rtsp://{host}:{port}{path} RTSP/1.0\r\n"
-                f"CSeq: 1\r\n"
-                f"\r\n"
-            )
-            s.sendall(describe.encode())
-            resp = s.recv(1024).decode(errors="ignore")
-            s.close()
-
-            if "RTSP/1.0 200" in resp:
-                logger.info(f"Stream ready after {attempt} attempts: {rtsp_url}")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-
-    logger.warning(f"Stream not ready after {max_wait}s ({attempt} attempts): {rtsp_url}")
-    return False
 
 
 # --- Flask App ---

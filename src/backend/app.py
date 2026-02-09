@@ -860,13 +860,13 @@ def get_history():
     with db_context() as (conn, cursor):
         if robot_id_filter:
             cursor.execute(
-                'SELECT id, start_time, end_time, status, robot_serial, report_content, model_id, total_tokens, robot_id '
+                'SELECT id, start_time, end_time, status, robot_serial, report_content, model_id, total_tokens, robot_id, video_path '
                 'FROM patrol_runs WHERE robot_id = ? ORDER BY id DESC',
                 (robot_id_filter,)
             )
         else:
             cursor.execute(
-                'SELECT id, start_time, end_time, status, robot_serial, report_content, model_id, total_tokens, robot_id '
+                'SELECT id, start_time, end_time, status, robot_serial, report_content, model_id, total_tokens, robot_id, video_path '
                 'FROM patrol_runs ORDER BY id DESC'
             )
         rows = cursor.fetchall()

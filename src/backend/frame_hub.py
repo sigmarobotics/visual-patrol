@@ -23,7 +23,7 @@ from logger import get_logger
 logger = get_logger("frame_hub", "frame_hub.log")
 
 POLL_INTERVAL = 0.1    # ~10fps gRPC polling
-FEEDER_INTERVAL = 2.0  # 0.5fps for ffmpeg push
+FEEDER_INTERVAL = 0.5  # 2fps for ffmpeg push
 PUSH_MONITOR_INTERVAL = 5.0  # check ffmpeg health every 5s
 
 
@@ -52,6 +52,7 @@ class FrameHub:
         self._monitor_thread = None
         self._push_target = None   # stored for auto-restart
         self._push_path = None     # stored for auto-restart
+        self._frames_fed = 0       # counter for wait_for_push_ready
 
     # --- Polling Lifecycle ---
 
@@ -168,8 +169,23 @@ class FrameHub:
         self._evaluate()  # re-evaluate if polling should continue
         logger.info("RTSP push stopped")
 
+    def wait_for_push_ready(self, timeout=15):
+        """Wait until at least one frame has been fed to ffmpeg (push is live).
+
+        Returns True if ready within timeout, False otherwise.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._frames_fed > 0:
+                logger.info(f"Push ready (frames_fed={self._frames_fed})")
+                return True
+            time.sleep(0.5)
+        logger.warning(f"Push not ready after {timeout}s (frames_fed={self._frames_fed})")
+        return False
+
     def _start_ffmpeg_and_feeder(self):
         """Start ffmpeg process and feeder thread. Used for initial start and restart."""
+        self._frames_fed = 0
         rtsp_url = f"rtsp://{self._push_target}{self._push_path}"
         cmd = [
             "ffmpeg", "-y",
@@ -203,14 +219,14 @@ class FrameHub:
             daemon=True,
         ).start()
 
-        # feeder thread: read from cache at 0.5fps, write JPEG to ffmpeg stdin
+        # feeder thread: read from cache at 2fps, write JPEG to ffmpeg stdin
         self._feeder_thread = threading.Thread(
             target=self._feeder_loop, daemon=True
         )
         self._feeder_thread.start()
 
     def _feeder_loop(self):
-        """Feed JPEG frames from cache to ffmpeg stdin at 0.5fps."""
+        """Feed JPEG frames from cache to ffmpeg stdin at 2fps."""
         while not self._feeder_stop.is_set():
             try:
                 if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
@@ -218,6 +234,7 @@ class FrameHub:
                     if frame and frame.data:
                         self._ffmpeg_proc.stdin.write(frame.data)
                         self._ffmpeg_proc.stdin.flush()
+                        self._frames_fed += 1
             except (BrokenPipeError, OSError):
                 break
             except Exception as e:
