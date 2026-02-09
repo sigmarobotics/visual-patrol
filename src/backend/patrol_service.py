@@ -435,6 +435,7 @@ class PatrolService:
 
         inspections_data = []
         turbo_mode = settings.get('turbo_mode', False)
+        was_patrolling = False
 
         try:
             # Main patrol loop
@@ -473,6 +474,24 @@ class PatrolService:
                     point, point_name, run_images_dir, settings,
                     turbo_mode, inspections_data
                 )
+
+            # Return home before cleanup (edge AI continues monitoring during return)
+            with self.patrol_lock:
+                was_patrolling = self.is_patrolling
+
+            if was_patrolling:
+                self._set_status("Returning Home...")
+                try:
+                    robot_service.return_home()
+                except Exception as e:
+                    logger.error(f"Return home failed: {e}")
+
+                # Wait for async inspections to complete (robot is moving home in parallel)
+                if turbo_mode:
+                    self._set_status("Processing Images...")
+                    self.inspection_queue.join()
+
+                time.sleep(2)
         finally:
             # Ensure edge AI monitor is always stopped
             if edge_ai_active:
@@ -501,8 +520,6 @@ class PatrolService:
             frame_hub.set_patrol_active(False)
 
         # Finalize patrol
-        with self.patrol_lock:
-            was_patrolling = self.is_patrolling
         final_status = "Completed" if was_patrolling else "Patrol Stopped"
 
         video_path = None
@@ -512,20 +529,6 @@ class PatrolService:
             video_path = video_filename
 
         if was_patrolling:
-            # In turbo mode, start returning home immediately while images are still processing
-            self._set_status("Returning Home...")
-            try:
-                robot_service.return_home()
-            except Exception as e:
-                logger.error(f"Return home failed: {e}")
-
-            # Wait for async inspections to complete (robot is moving home in parallel)
-            if turbo_mode:
-                self._set_status("Processing Images...")
-                self.inspection_queue.join()
-
-            time.sleep(2)
-
             if recorder and video_path:
                 self._set_status("Analyzing Video...")
                 try:
