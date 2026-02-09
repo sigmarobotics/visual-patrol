@@ -8,8 +8,10 @@ TestLiveMonitor uses the same JPS flow for settings page quick test (no DB write
 import base64
 import json
 import os
+import re
 import threading
 import time
+import urllib.request
 from urllib.parse import urlparse
 
 import cv2
@@ -637,7 +639,7 @@ class TestLiveMonitor:
 
     def get_status(self):
         with self._lock:
-            return {
+            status = {
                 "active": self.is_running,
                 "ws_connected": self.ws_connected,
                 "alert_count": len(self.alerts),
@@ -645,11 +647,36 @@ class TestLiveMonitor:
                 "ws_messages": list(self.ws_messages),
                 "error": self.error,
             }
+        if self.is_running:
+            status["alert_metrics"] = self._fetch_alert_metrics()
+        return status
 
     def get_snapshot(self):
         """Return latest JPEG bytes captured from mediamtx, or None."""
         with self._lock:
             return self._latest_frame
+
+    _ALERT_METRIC_RE = re.compile(
+        r'alert_status\{alert_number="[^"]*",alert_string="([^"]*)"\}\s+([\d.]+)'
+    )
+
+    def _fetch_alert_metrics(self):
+        """Fetch current alert evaluation states from JPS Prometheus metrics (port 5012)."""
+        metrics_url = self._config.get("metrics_url", "") if self._config else ""
+        if not metrics_url:
+            return {}
+        try:
+            req = urllib.request.Request(metrics_url)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                text = resp.read().decode()
+            result = {}
+            for m in self._ALERT_METRIC_RE.finditer(text):
+                alert_string, value = m.group(1), float(m.group(2))
+                if alert_string:
+                    result[alert_string] = value
+            return result
+        except Exception:
+            return {}
 
     # --- Internal helpers ---
 

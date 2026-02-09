@@ -69,13 +69,12 @@ Autonomous multi-robot patrol system integrating **Kachaka Robot** with **Google
 +-------------------------------------------------------------+
 ```
 
-**Robot camera unified pipeline:**
+**Robot camera pipeline (direct push):**
 ```
-frame_hub gRPC poll -> frame cache -> ffmpeg push (0.5fps) -> mediamtx /raw/{robot-id}/camera
-  -> relay service transcode -> mediamtx /{robot-id}/camera -> VILA JPS
+frame_hub gRPC poll -> frame cache -> ffmpeg push (2fps) -> mediamtx /{robot-id}/camera -> VILA JPS
 ```
 
-**External RTSP pipeline:**
+**External RTSP pipeline (via relay):**
 ```
 External RTSP source -> relay service transcode -> mediamtx /{robot-id}/external -> VILA JPS
 ```
@@ -296,6 +295,7 @@ Settings are stored in a shared SQLite database (`data/report/report.db`, table 
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `JETSON_JPS_API_PORT` | 5010 | VILA JPS API port |
+| `JETSON_JPS_METRICS_PORT` | 5012 | VILA JPS Prometheus metrics port |
 | `JETSON_MEDIAMTX_PORT` | 8555 | mediamtx RTSP port |
 
 ## Deployment

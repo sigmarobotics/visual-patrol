@@ -66,7 +66,7 @@ Visual Patrol 是一套多機器人自主巡檢系統。透過網頁單頁應用
 
 1. **單一 gRPC 輪詢執行緒**：以 ~10fps 輪詢機器人前方攝影機，將最新畫面快取於記憶體
 2. **畫面快取 API**：所有消費者 (MJPEG 串流、Gemini 巡檢、錄影、證據擷取) 透過 `get_latest_frame()` 讀取快取
-3. **按需 RTSP 推送**：啟動 ffmpeg 將快取畫面推送至 Jetson mediamtx (`/raw/{robot_id}/camera`)，供 relay 轉碼後交給 VILA JPS
+3. **按需 RTSP 推送**：啟動 ffmpeg 將快取畫面以 2fps 直接推送至 Jetson mediamtx (`/{robot_id}/camera`)，供 VILA JPS 分析
 4. **生命週期管理**：根據巡檢狀態和 `enable_idle_stream` 設定自動啟停輪詢
 
 ### RTSP Relay (mediamtx + ffmpeg)
@@ -74,13 +74,13 @@ Visual Patrol 是一套多機器人自主巡檢系統。透過網頁單頁應用
 - **mediamtx**: 輕量級 RTSP 伺服器 (`bluenviron/mediamtx` Docker 映像，Jetson 上 port 8555)
 - **ffmpeg**: 由 `relay_service.py` 管理 (Jetson 端 relay 服務)
 
-兩種 relay 類型，皆**轉碼**為 H264 Baseline profile 以相容 NvMMLite 硬體解碼器：
-1. **機器人攝影機 relay**: frame_hub gRPC 輪詢 --> 畫面快取 --> ffmpeg 推送 (0.5fps) --> mediamtx `/raw/{robot_id}/camera` --> relay 轉碼 --> mediamtx `/{robot_id}/camera` --> VILA JPS
-2. **外部 RTSP relay**: 來源 RTSP --> relay 服務 ffmpeg 轉碼 (libx264/NVENC) --> RTSP 推送至 mediamtx `/{robot_id}/external`
+兩種串流路徑：
+1. **機器人攝影機 (直推)**: frame_hub gRPC 輪詢 --> 畫面快取 --> ffmpeg 推送 (2fps) --> mediamtx `/{robot_id}/camera` --> VILA JPS（不經過 relay）
+2. **外部 RTSP (經 relay 轉碼)**: 來源 RTSP --> relay 服務 ffmpeg 轉碼 (H264 Baseline) --> RTSP 推送至 mediamtx `/{robot_id}/external` --> VILA JPS
 
-Relay 服務 (`relay_service.py`, port 5020) 是 Jetson 上的獨立 Flask 應用程式，管理 ffmpeg 程序。CI 建置映像至 `ghcr.io/sigma-snaken/visual-patrol-relay:latest`。當 `RELAY_SERVICE_URL` 未設定時，relay 功能不可用。
+Relay 服務 (`relay_service.py`, port 5020) 是 Jetson 上的獨立 Flask 應用程式，僅用於外部 RTSP 轉碼。CI 建置映像至 `ghcr.io/sigma-snaken/visual-patrol-relay:latest`。
 
-VILA JPS 從 mediamtx 拉取這些 RTSP 串流進行持續 VLM 分析。
+VILA JPS 從 mediamtx 拉取 RTSP 串流進行持續 VLM 分析。
 
 ### VILA JPS 整合
 
@@ -141,11 +141,9 @@ Flask:    從共用 SQLite DB 讀取，回傳設定
 
 ```
 1. 巡檢啟動
-   |-- frame_hub.start_rtsp_push() 推送 gRPC 畫面至 mediamtx /raw/{robot_id}/camera
-   |-- relay_service_client 啟動 Jetson relay
-   |   |-- 機器人攝影機: /raw/{robot_id}/camera --> relay 轉碼 --> /{robot_id}/camera
-   |   +-- 外部 RTSP: relay 服務 --> ffmpeg 轉碼 --> mediamtx RTSP
-   +-- 等待串流就緒
+   |-- 機器人攝影機: frame_hub.start_rtsp_push() 以 2fps 直推至 mediamtx /{robot_id}/camera
+   |-- 外部 RTSP: relay_service_client 啟動 Jetson relay 轉碼至 /{robot_id}/external
+   +-- 等待串流就緒 (frame_hub.wait_for_push_ready 或 relay wait_for_stream)
 
 2. LiveMonitor.start()
    |-- POST /api/v1/live-stream --> 註冊每個串流 --> 取得 stream_id

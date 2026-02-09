@@ -206,9 +206,9 @@ export async function testEdgeAI() {
         `請用VLC打開這個網址: <code style="user-select:all; color:var(--cyan-glow); font-weight:bold;">${escapeHtml(rtspUrl)}</code>` +
         `</div>` +
         `<table class="data-table" id="test-alert-rules-table" style="width:100%; font-size:12px;">` +
-        `<thead><tr><th style="text-align:left;">Alert Rule</th><th style="width:80px; text-align:center;">Count</th><th style="width:160px; text-align:center;">Last Triggered</th></tr></thead>` +
+        `<thead><tr><th style="text-align:left;">Alert Rule</th><th style="width:60px; text-align:center;">Status</th><th style="width:80px; text-align:center;">Count</th><th style="width:160px; text-align:center;">Last Triggered</th></tr></thead>` +
         `<tbody>` +
-        rules.map(r => `<tr data-rule="${escapeHtml(r)}"><td>${escapeHtml(r)}</td><td style="text-align:center;">0</td><td style="text-align:center; color:var(--text-muted);">-</td></tr>`).join('') +
+        rules.map(r => `<tr data-rule="${escapeHtml(r)}"><td>${escapeHtml(r)}</td><td style="text-align:center; color:var(--text-muted);">-</td><td style="text-align:center;">0</td><td style="text-align:center; color:var(--text-muted);">-</td></tr>`).join('') +
         `</tbody></table>`;
 
     try {
@@ -250,22 +250,31 @@ export async function testEdgeAI() {
             statusEl.textContent = `${wsLabel} | Alerts: ${status.alert_count}`;
             if (status.error) statusEl.textContent += ` | ${status.error}`;
 
-            // Update alert rules table from alerts list
+            // Update alert rules table from alerts list + metrics
             const alerts = status.alerts || [];
+            const metrics = status.alert_metrics || {};
             const table = document.getElementById('test-alert-rules-table');
             if (table) {
                 const rows = table.querySelectorAll('tbody tr');
                 rows.forEach(row => {
                     const rule = row.getAttribute('data-rule');
-                    // Find all alerts matching this rule
+                    const cells = row.querySelectorAll('td');
+                    // Status column (cell 1) from Prometheus metrics
+                    if (rule in metrics) {
+                        if (metrics[rule] > 0) {
+                            cells[1].innerHTML = '<span style="color:var(--coral); font-weight:bold;">NG</span>';
+                        } else {
+                            cells[1].innerHTML = '<span style="color:var(--cyan-glow);">OK</span>';
+                        }
+                    }
+                    // Count column (cell 2) and Last Triggered (cell 3)
                     const matching = alerts.filter(a => a.rule === rule);
                     const count = matching.length;
                     const lastTime = count > 0 ? matching[matching.length - 1].timestamp : null;
-                    const cells = row.querySelectorAll('td');
-                    cells[1].textContent = count;
+                    cells[2].textContent = count;
                     if (lastTime) {
-                        cells[2].textContent = lastTime;
-                        cells[2].style.color = 'var(--coral)';
+                        cells[3].textContent = lastTime;
+                        cells[3].style.color = 'var(--coral)';
                     }
                 });
             }

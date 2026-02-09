@@ -11,6 +11,7 @@ RELAY_SERVICE_URL = os.getenv("RELAY_SERVICE_URL", "")
 
 # Jetson service ports (fixed, co-located on Jetson)
 JETSON_JPS_API_PORT = 5010
+JETSON_JPS_METRICS_PORT = 5012
 JETSON_MEDIAMTX_PORT = 8555
 
 # Paths

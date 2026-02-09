@@ -27,13 +27,12 @@ Each backend instance runs a centralized `frame_hub` module that provides a sing
             relay_manager: HTTP client -> Jetson relay service
 
           Jetson Host:
-            relay_service.py (port 5020)
-              RTSP in -> ffmpeg transcode H264 Baseline -> RTSP out
             mediamtx (port 8555)
-              /raw/{robot-id}/camera   <- frame_hub ffmpeg push
-              /{robot-id}/camera       <- relay transcode output
+              /{robot-id}/camera       <- frame_hub direct push (2fps)
               /{robot-id}/external     <- relay transcode output
-            VILA JPS (port 5010 API, port 5016 WS)
+            relay_service.py (port 5020)
+              External RTSP in -> ffmpeg transcode H264 Baseline -> RTSP out
+            VILA JPS (port 5010 API, port 5016 WS, port 5012 metrics)
               Pulls from mediamtx -> VLM analysis -> WebSocket alerts
 ```
 
@@ -127,11 +126,11 @@ The frame hub is the centralized camera frame management module. It replaces the
            stream    inspection  recorder  capture
                            |
                   (on-demand, during patrol)
-                    _feeder_loop (0.5fps)
+                    _feeder_loop (2fps)
                            |
                     ffmpeg stdin (image2pipe)
                            |
-                    RTSP push to mediamtx
+                    RTSP push to mediamtx /{robot-id}/camera
 ```
 
 **Key features:**
@@ -172,16 +171,14 @@ The relay layer bridges robot cameras and external RTSP sources to VILA JPS for 
 
 **Two relay pipelines:**
 
-1. **Robot camera (unified pipeline)**:
+1. **Robot camera (direct push)**:
    ```
-   frame_hub gRPC poll -> frame cache -> ffmpeg push (0.5fps)
-     -> mediamtx /raw/{robot-id}/camera
-     -> relay service transcode (H264 Baseline)
+   frame_hub gRPC poll -> frame cache -> ffmpeg push (2fps)
      -> mediamtx /{robot-id}/camera
      -> VILA JPS
    ```
 
-2. **External RTSP**:
+2. **External RTSP (via relay)**:
    ```
    External RTSP source URL
      -> relay service transcode (H264 Baseline)
@@ -267,13 +264,12 @@ Any backend can serve global requests because they all share the same database.
 
 ```
 1. Patrol starts
-   +-- frame_hub.start_rtsp_push(mediamtx_host, /raw/{robot-id}/camera)
-   |   +-- ffmpeg stdin push at 0.5fps from frame cache
+   +-- Robot camera: frame_hub.start_rtsp_push(mediamtx_host, /{robot-id}/camera)
+   |   +-- ffmpeg stdin push at 2fps from frame cache (direct, no relay)
    |   +-- wait_for_push_ready() blocks until first frame fed
-   +-- relay_service_client.start_relay()
-   |   +-- Robot camera: transcode /raw/{robot-id}/camera -> /{robot-id}/camera
-   |   +-- External RTSP: transcode source -> /{robot-id}/external
-   +-- relay_service_client.wait_for_stream() blocks until transcoded stream ready
+   +-- External RTSP: relay_service_client.start_relay()
+   |   +-- transcode source -> /{robot-id}/external
+   +-- Wait for stream ready (frame_hub or relay_service_client)
 
 2. LiveMonitor.start()
    +-- Cleanup stale JPS streams (GET + DELETE)
@@ -334,7 +330,7 @@ Each Flask backend runs several background threads:
 | Thread | Module | Purpose | Interval |
 |--------|--------|---------|----------|
 | `_poll_loop` | frame_hub | Polls robot camera via gRPC, updates frame cache | 100ms (~10fps) |
-| `_feeder_loop` | frame_hub | Feeds JPEG frames from cache to ffmpeg stdin | 500ms (0.5fps) |
+| `_feeder_loop` | frame_hub | Feeds JPEG frames from cache to ffmpeg stdin | 500ms (2fps) |
 | `_monitor_push` | frame_hub | Monitors ffmpeg health, auto-restarts if dead | 5s |
 | `_stderr_reader` | frame_hub | Reads ffmpeg stderr for logging | Continuous |
 | `_polling_loop` | robot_service | Polls robot pose, battery, map via gRPC | 100ms |

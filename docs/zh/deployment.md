@@ -163,15 +163,16 @@ Relay service 是 Jetson 端的元件，處理所有 ffmpeg 影像轉碼。與 m
 ```
 VP Flask (開發/Jetson)             Jetson (host networking)
 +----------------------+          +-----------------------------+
-| frame_hub.py         |  RTSP    | relay_service.py (:5020)    |
-|  ffmpeg push -> /raw |  push    |  ffmpeg 轉碼 (libx264)      |
-|                      | -------> |  mediamtx (:8555)           |
-| relay_manager.py     |  HTTP    |  VILA JPS (:5010/:5016)     |
-|  RelayServiceClient  | -------> |                             |
-+----------------------+          +-----------------------------+
+| frame_hub.py         |  RTSP    | mediamtx (:8555)            |
+|  ffmpeg push (2fps)  |  push    |  /{robot-id}/camera         |
+|  -> /{robot-id}/cam  | -------> |                             |
+| relay_manager.py     |  HTTP    | relay_service.py (:5020)    |
+|  (僅外部 RTSP)       | -------> |  ffmpeg 轉碼 (libx264)      |
++----------------------+          | VILA JPS (:5010/:5016)      |
+                                  +-----------------------------+
 ```
 
-機器人攝影機：frame_hub 以 0.5fps 將 raw JPEG-over-RTSP 推送至 mediamtx 的 `/raw/{robot_id}/camera`，然後 relay service 讀取此串流並轉碼為乾淨的 H264 至 `/{robot_id}/camera`。外部 RTSP 攝影機：relay service 直接讀取來源 URL 並轉碼至 `/{robot_id}/external`。
+機器人攝影機：frame_hub 以 2fps 將 JPEG-over-RTSP (H264 Baseline) 直接推送至 mediamtx 的 `/{robot_id}/camera`，不經過 relay。外部 RTSP 攝影機：relay service 讀取來源 URL 並轉碼至 `/{robot_id}/external`。
 
 **設定 (透過 prod compose)：**
 
@@ -221,7 +222,7 @@ docker run -d --name visual_patrol_rtsp_relay \
 | `RELAY_SERVICE_PORT` | `5020` | HTTP API 監聽連接埠 |
 | `MEDIAMTX_HOST` | `localhost:8555` | mediamtx RTSP 推送目標 (`host:port`) |
 | `USE_NVENC` | `false` | 使用 NVENC 硬體編碼器 (`h264_nvmpi`)。需 L4T 基礎映像及 `--runtime=nvidia`。 |
-| `RELAY_FPS` | `0.5` | 轉碼輸出幀率 |
+| `RELAY_FPS` | `2` | 轉碼輸出幀率 |
 | `LOG_DIR` | `./logs` | 日誌檔目錄 |
 
 **VP 連線設定：** 在每個機器人服務上設定 `RELAY_SERVICE_URL`：
@@ -402,7 +403,7 @@ docker build -f deploy/relay-service/Dockerfile -t visual-patrol-relay .
 2. 系統相依：ffmpeg
 3. Python 相依：Flask
 4. 原始碼：複製 `src/backend/relay_service.py`
-5. 預設環境：`RELAY_SERVICE_PORT=5020`、`MEDIAMTX_HOST=localhost:8555`、`USE_NVENC=false`、`RELAY_FPS=0.5`
+5. 預設環境：`RELAY_SERVICE_PORT=5020`、`MEDIAMTX_HOST=localhost:8555`、`USE_NVENC=false`、`RELAY_FPS=2`
 
 ## 目錄結構 (執行時)
 

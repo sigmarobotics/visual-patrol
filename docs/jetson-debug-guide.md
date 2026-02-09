@@ -59,12 +59,11 @@ All source files are in the visual-patrol repo at `src/backend/`:
 ## Data Flow
 
 ```
-Robot Camera (Kachaka gRPC)
-  → relay_manager.py: FrameFeederThread at 0.5fps → HTTP POST to relay_service
-    → relay_service.py: ffmpeg (image2pipe → libx264)
-      → RTSP push to rtsp://localhost:8555/{robot-id}/camera
+Robot Camera (Kachaka gRPC) — direct push, no relay
+  → frame_hub.py: gRPC poll → frame cache → ffmpeg push (2fps, H264 Baseline)
+    → RTSP push to rtsp://localhost:8555/{robot-id}/camera
 
-External RTSP Camera
+External RTSP Camera — via relay service
   → relay_service.py: ffmpeg transcode (libx264)
     → RTSP push to rtsp://localhost:8555/{robot-id}/external
 

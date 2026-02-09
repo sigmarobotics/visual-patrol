@@ -163,15 +163,16 @@ The relay service is a Jetson-side component that handles all ffmpeg video trans
 ```
 VP Flask (dev/Jetson)              Jetson (host networking)
 +----------------------+          +-----------------------------+
-| frame_hub.py         |  RTSP    | relay_service.py (:5020)    |
-|  ffmpeg push -> /raw |  push    |  ffmpeg transcode (libx264) |
-|                      | -------> |  mediamtx (:8555)           |
-| relay_manager.py     |  HTTP    |  VILA JPS (:5010/:5016)     |
-|  RelayServiceClient  | -------> |                             |
-+----------------------+          +-----------------------------+
+| frame_hub.py         |  RTSP    | mediamtx (:8555)            |
+|  ffmpeg push (2fps)  |  push    |  /{robot-id}/camera         |
+|  -> /{robot-id}/cam  | -------> |                             |
+| relay_manager.py     |  HTTP    | relay_service.py (:5020)    |
+|  (external RTSP only)| -------> |  ffmpeg transcode (libx264) |
++----------------------+          | VILA JPS (:5010/:5016)      |
+                                  +-----------------------------+
 ```
 
-For robot cameras: frame_hub pushes raw JPEG-over-RTSP to mediamtx at `/raw/{robot_id}/camera`, then the relay service reads this stream and transcodes it to clean H264 at `/{robot_id}/camera`. For external RTSP cameras: the relay service reads the source URL directly and transcodes to `/{robot_id}/external`.
+For robot cameras: frame_hub pushes JPEG-over-RTSP (H264 Baseline, 2fps) directly to mediamtx at `/{robot_id}/camera` -- no relay needed. For external RTSP cameras: the relay service reads the source URL and transcodes to `/{robot_id}/external`.
 
 **Setup (via prod compose):**
 
@@ -221,7 +222,7 @@ docker run -d --name visual_patrol_rtsp_relay \
 | `RELAY_SERVICE_PORT` | `5020` | HTTP API listen port |
 | `MEDIAMTX_HOST` | `localhost:8555` | mediamtx RTSP push target (`host:port`) |
 | `USE_NVENC` | `false` | Use NVENC hardware encoder (`h264_nvmpi`). Requires L4T base image and `--runtime=nvidia`. |
-| `RELAY_FPS` | `0.5` | Output framerate for transcode |
+| `RELAY_FPS` | `2` | Output framerate for transcode |
 | `LOG_DIR` | `./logs` | Log file directory |
 
 **VP Connection:** Set `RELAY_SERVICE_URL` on each robot service to point to the relay service:
@@ -402,7 +403,7 @@ docker build -f deploy/relay-service/Dockerfile -t visual-patrol-relay .
 2. System deps: ffmpeg
 3. Python deps: Flask
 4. Source: Copies `src/backend/relay_service.py`
-5. Default env: `RELAY_SERVICE_PORT=5020`, `MEDIAMTX_HOST=localhost:8555`, `USE_NVENC=false`, `RELAY_FPS=0.5`
+5. Default env: `RELAY_SERVICE_PORT=5020`, `MEDIAMTX_HOST=localhost:8555`, `USE_NVENC=false`, `RELAY_FPS=2`
 
 ## Directory Structure (Runtime)
 

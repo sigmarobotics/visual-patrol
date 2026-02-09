@@ -216,7 +216,7 @@ def test_edge_ai_start():
     if not jetson_host:
         return jsonify({"error": "Jetson Host is required"}), 400
 
-    from config import JETSON_JPS_API_PORT, JETSON_MEDIAMTX_PORT
+    from config import JETSON_JPS_API_PORT, JETSON_JPS_METRICS_PORT, JETSON_MEDIAMTX_PORT
     vila_jps_url = f"http://{jetson_host}:{JETSON_JPS_API_PORT}"
 
     rules = data.get('rules') or settings.get('edge_ai_rules', [])
@@ -234,6 +234,7 @@ def test_edge_ai_start():
         "robot_id": ROBOT_ID,
         "mediamtx_internal": f"{jetson_host}:{JETSON_MEDIAMTX_PORT}",
         "mediamtx_external": f"localhost:{JETSON_MEDIAMTX_PORT}",
+        "metrics_url": f"http://{jetson_host}:{JETSON_JPS_METRICS_PORT}/metrics",
     })
 
     if test_edge_ai.error:
