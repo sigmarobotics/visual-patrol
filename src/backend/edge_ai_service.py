@@ -197,7 +197,7 @@ class LiveMonitor:
         """POST /api/v1/alerts to set alert rules for a stream."""
         url = f"{vila_jps_url}/api/v1/alerts"
         body = {"alerts": rules, "id": stream_id}
-        resp = requests.post(url, json=body, timeout=15)
+        resp = requests.post(url, json=body, timeout=60)
         resp.raise_for_status()
 
     def _deregister_stream(self, vila_jps_url, stream_id):
@@ -751,7 +751,7 @@ class TestLiveMonitor:
     def _set_alert_rules(self, vila_jps_url, stream_id, rules):
         url = f"{vila_jps_url}/api/v1/alerts"
         body = {"alerts": rules, "id": stream_id}
-        resp = requests.post(url, json=body, timeout=15)
+        resp = requests.post(url, json=body, timeout=60)
         resp.raise_for_status()
 
     def _deregister_stream(self, vila_jps_url, stream_id):
