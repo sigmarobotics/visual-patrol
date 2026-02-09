@@ -353,18 +353,24 @@ class LiveMonitor:
                 except Exception as e:
                     logger.error(f"Evidence capture via gRPC failed: {e}")
 
-        # External RTSP: capture from the relay RTSP URL
+        # External RTSP: capture from mediamtx using Flask-accessible host
         if stream_type == "external_rtsp":
-            mediamtx_ext = self._config.get("mediamtx_external", "localhost:8554") if self._config else None
+            mediamtx_ext = self._config.get("mediamtx_external") if self._config else None
             rtsp_url = stream_config.get("rtsp_url", "")
             if rtsp_url and mediamtx_ext:
+                # Reconstruct URL with Flask-accessible mediamtx host
+                # (stream rtsp_url uses localhost for JPS co-located perspective)
+                parsed = urlparse(rtsp_url)
+                evidence_url = f"rtsp://{mediamtx_ext}{parsed.path}"
                 try:
-                    cap = cv2.VideoCapture(rtsp_url)
+                    cap = cv2.VideoCapture(evidence_url)
                     ret, frame = cap.read()
                     cap.release()
                     if ret and frame is not None:
                         _, buf = cv2.imencode('.jpg', frame)
                         return buf.tobytes()
+                    else:
+                        logger.warning(f"Evidence capture returned no frame: {evidence_url}")
                 except Exception as e:
                     logger.error(f"Evidence capture via RTSP failed: {e}")
 

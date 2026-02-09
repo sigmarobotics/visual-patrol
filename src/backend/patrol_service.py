@@ -422,7 +422,7 @@ class PatrolService:
                     "streams": streams,
                     "rules": rules,
                     "telegram_config": tg_config,
-                    "mediamtx_external": mediamtx_for_jps,
+                    "mediamtx_external": f"{jetson_host}:{JETSON_MEDIAMTX_PORT}",
                 })
                 edge_ai_active = True
 
