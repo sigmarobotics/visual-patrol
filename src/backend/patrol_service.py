@@ -586,9 +586,6 @@ class PatrolService:
         logger.info(f"Patrol Run {self.current_run_id} finished: {final_status}")
         with self.patrol_lock:
             self.is_patrolling = False
-        # Reset current_run_id so results API returns empty until next patrol
-        with self.state_lock:
-            self.current_run_id = None
 
     def _move_to_point(self, point):
         """Move robot to patrol point. Returns status string."""

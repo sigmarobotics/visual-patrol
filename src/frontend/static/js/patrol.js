@@ -118,6 +118,10 @@ export async function loadResults() {
             const newest = results[results.length - 1];
             const resultHTML = renderAIResultHTML(newest.result);
 
+            latestBox.style.display = "";
+            latestBox.style.alignItems = "";
+            latestBox.style.justifyContent = "";
+            latestBox.style.color = "";
             latestBox.innerHTML = `
                 <div style="font-weight:bold; color:#006b56; margin-bottom:4px;">
                     ${escapeHtml(newest.point_name)}
