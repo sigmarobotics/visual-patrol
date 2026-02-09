@@ -135,10 +135,10 @@ class FrameHub:
         self._push_path = rtsp_path
         self.start_polling()  # push needs frames in cache
 
+        self._feeder_stop.clear()
         self._start_ffmpeg_and_feeder()
 
         # Start monitor thread for auto-restart
-        self._feeder_stop.clear()
         self._monitor_thread = threading.Thread(target=self._monitor_push, daemon=True)
         self._monitor_thread.start()
 
@@ -221,7 +221,7 @@ class FrameHub:
             except (BrokenPipeError, OSError):
                 break
             except Exception as e:
-                logger.debug(f"Feeder error: {e}")
+                logger.info(f"Feeder error: {e}")
             self._feeder_stop.wait(FEEDER_INTERVAL)
 
     def _monitor_push(self):
@@ -245,7 +245,7 @@ class FrameHub:
             for line in proc.stderr:
                 s = line.decode(errors="ignore").strip() if isinstance(line, bytes) else line.strip()
                 if s:
-                    logger.debug(f"ffmpeg: {s}")
+                    logger.info(f"ffmpeg: {s}")
         except Exception:
             pass
 
