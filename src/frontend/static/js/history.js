@@ -34,31 +34,6 @@ export function initHistory() {
         });
     }
 
-    const btnGenerateReport = document.getElementById('btn-generate-report');
-    if (btnGenerateReport) {
-        btnGenerateReport.addEventListener('click', generateReport);
-
-        // Initialize dates
-        const end = new Date();
-        const start = new Date();
-        start.setDate(start.getDate() - 7);
-
-        const formatDate = (date) => {
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            return `${y}-${m}-${d}`;
-        };
-
-        const startInput = document.getElementById('history-start-date');
-        const endInput = document.getElementById('history-end-date');
-
-        if (startInput && endInput) {
-            startInput.value = formatDate(start);
-            endInput.value = formatDate(end);
-        }
-    }
-
     // Robot filter
     const robotFilter = document.getElementById('history-robot-filter');
     if (robotFilter) {
@@ -69,13 +44,10 @@ export function initHistory() {
     window.viewHistoryDetail = viewHistoryDetail;
     window.closeHistoryModal = closeHistoryModal;
     window.saveReportAsPDF = saveReportAsPDF;
-    window.closeGeneratedReport = closeGeneratedReport;
-    window.saveGeneratedReportAsPDF = saveGeneratedReportAsPDF;
 
     // Internal state for PDF generation
     window.currentReportRunId = null;
     window.currentReportData = null;
-    window.generatedReportData = null;
 }
 
 async function populateRobotFilter(selectId) {
@@ -173,9 +145,14 @@ async function viewHistoryDetail(runId) {
 
     window.currentReportRunId = runId;
 
+    const videoSection = document.getElementById('modal-video-section');
+    const videoContent = document.getElementById('modal-video-content');
+    const videoDownload = document.getElementById('modal-video-download');
+
     modal.style.display = 'flex';
     contentDiv.textContent = 'Loading details...';
     listDiv.innerHTML = '';
+    if (videoSection) videoSection.style.display = 'none';
     title.textContent = `Patrol Report #${runId}`;
 
     try {
@@ -194,6 +171,23 @@ async function viewHistoryDetail(runId) {
             contentDiv.innerHTML = marked.parse(run.report_content);
         } else {
             contentDiv.textContent = "No generated report available.";
+        }
+
+        // Video analysis section
+        if (videoSection && (run.video_analysis || run.video_path)) {
+            videoSection.style.display = 'block';
+
+            if (run.video_analysis && videoContent) {
+                videoContent.innerHTML = marked.parse(run.video_analysis);
+            } else if (videoContent) {
+                videoContent.textContent = 'No video analysis available.';
+            }
+
+            if (run.video_path && videoDownload) {
+                videoDownload.innerHTML = `<a href="/api/video/${runId}" class="btn-primary" style="display:inline-block; padding:6px 14px; font-size:12px; text-decoration:none;">⬇ Download Video</a>`;
+            } else if (videoDownload) {
+                videoDownload.innerHTML = '';
+            }
         }
 
         listDiv.innerHTML = '';
@@ -250,70 +244,3 @@ function saveReportAsPDF() {
     window.location.href = `/api/report/${runId}/pdf`;
 }
 
-function closeGeneratedReport() {
-    const container = document.getElementById('generated-report-container');
-    if (container) container.style.display = 'none';
-}
-
-function saveGeneratedReportAsPDF() {
-    const startDate = document.getElementById('history-start-date')?.value;
-    const endDate = document.getElementById('history-end-date')?.value;
-
-    if (!startDate || !endDate) {
-        alert('No date range selected.');
-        return;
-    }
-
-    window.location.href = `/api/reports/generate/pdf?start_date=${startDate}&end_date=${endDate}`;
-}
-
-async function generateReport() {
-    const startInput = document.getElementById('history-start-date');
-    const endInput = document.getElementById('history-end-date');
-    const btn = document.getElementById('btn-generate-report');
-    const container = document.getElementById('generated-report-container');
-    const contentDiv = document.getElementById('generated-report-content');
-
-    if (!startInput.value || !endInput.value) {
-        alert("Please select a date range.");
-        return;
-    }
-
-    const originalText = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="icon">⏳</span> Generating...';
-
-    if (container) container.style.display = 'none';
-
-    try {
-        const res = await fetch('/api/reports/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                start_date: startInput.value,
-                end_date: endInput.value
-            })
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-            throw new Error(data.error || "Failed to generate report");
-        }
-
-        if (container) {
-            container.style.display = 'block';
-            contentDiv.innerHTML = marked.parse(data.report);
-
-            document.getElementById('report-prompt-tokens').innerText = data.usage.prompt_token_count || 0;
-            document.getElementById('report-completion-tokens').innerText = data.usage.candidates_token_count || 0;
-            document.getElementById('report-total-tokens').innerText = data.usage.total_token_count || 0;
-        }
-
-    } catch (e) {
-        alert("Error: " + e.message);
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
-    }
-}

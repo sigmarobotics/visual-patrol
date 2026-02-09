@@ -170,7 +170,7 @@ export async function testEdgeAI() {
         clearInterval(_testStatusPollId);
         _testStatusPollId = null;
         btn.textContent = 'Test Edge AI';
-        btn.classList.remove('btn-danger');
+        btn.classList.replace('btn-danger', 'btn-premium');
         statusEl.textContent = 'Stopped';
         return;
     }
@@ -197,7 +197,13 @@ export async function testEdgeAI() {
     // Start test
     statusEl.textContent = 'Starting relay...';
     resultsEl.style.display = 'block';
-    resultsEl.innerHTML = '<div id="test-ws-log"></div>';
+    const streamSuffix = streamSource === 'external_rtsp' ? 'external' : 'camera';
+    const rtspUrl = `rtsp://${jetsonHost}:8555/${state.selectedRobotId}/${streamSuffix}`;
+    resultsEl.innerHTML =
+        `<div style="margin-bottom:8px; padding:8px 10px; background:rgba(0,200,180,0.08); border:1px solid var(--cyan-dim); border-radius:4px; font-size:12px;">` +
+        `請用VLC打開這個網址: <code style="user-select:all; color:var(--cyan-glow); font-weight:bold;">${escapeHtml(rtspUrl)}</code>` +
+        `</div>` +
+        `<div id="test-ws-log"></div>`;
 
     try {
         const res = await fetch(`/api/${state.selectedRobotId}/test_edge_ai/start`, {
@@ -216,7 +222,7 @@ export async function testEdgeAI() {
     }
 
     btn.textContent = 'Stop Test';
-    btn.classList.add('btn-danger');
+    btn.classList.replace('btn-premium', 'btn-danger');
     statusEl.textContent = 'Starting relay...';
 
     let lastMsgCount = 0;
@@ -231,7 +237,7 @@ export async function testEdgeAI() {
                 clearInterval(_testStatusPollId);
                 _testStatusPollId = null;
                 btn.textContent = 'Test Edge AI';
-                btn.classList.remove('btn-danger');
+                btn.classList.replace('btn-danger', 'btn-premium');
                 statusEl.textContent = status.error ? 'Error: ' + status.error : 'Stopped';
                 return;
             }

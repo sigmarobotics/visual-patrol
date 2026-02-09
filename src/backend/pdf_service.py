@@ -674,7 +674,75 @@ def _build_token_table(story, styles, run_dict, inspections):
     story.append(Spacer(1, 10*mm))
 
 
-def generate_analysis_report(content, start_date, end_date):
+def _build_analysis_token_table(story, styles, period_tokens, report_tokens):
+    """Build token usage summary table for analysis reports."""
+    story.append(Paragraph("Token Usage Summary (Token \u4f7f\u7528\u6458\u8981)", styles['SectionHeader']))
+
+    def _fmt(n):
+        return f"{n:,}"
+
+    header_style = styles['MDTableHeader']
+    cell_style = styles['MDTableCell']
+    bold_cell = ParagraphStyle('BoldCell', parent=cell_style, fontName=CJK_BOLD)
+
+    table_data = [
+        [
+            Paragraph("Category (\u985e\u5225)", header_style),
+            Paragraph("Input Tokens", header_style),
+            Paragraph("Output Tokens", header_style),
+            Paragraph("Total Tokens", header_style),
+        ],
+        [
+            Paragraph("\u5de1\u6aa2\u671f\u9593\u6d88\u8017 (Patrol Period)", cell_style),
+            Paragraph(_fmt(period_tokens.get('input', 0)), cell_style),
+            Paragraph(_fmt(period_tokens.get('output', 0)), cell_style),
+            Paragraph(_fmt(period_tokens.get('total', 0)), cell_style),
+        ],
+        [
+            Paragraph("\u672c\u5831\u544a\u751f\u6210 (This Report)", cell_style),
+            Paragraph(_fmt(report_tokens.get('input', 0)), cell_style),
+            Paragraph(_fmt(report_tokens.get('output', 0)), cell_style),
+            Paragraph(_fmt(report_tokens.get('total', 0)), cell_style),
+        ],
+    ]
+
+    # Grand total
+    grand_in = period_tokens.get('input', 0) + report_tokens.get('input', 0)
+    grand_out = period_tokens.get('output', 0) + report_tokens.get('output', 0)
+    grand_total = period_tokens.get('total', 0) + report_tokens.get('total', 0)
+
+    table_data.append([
+        Paragraph("<b>\u5408\u8a08 (Grand Total)</b>", bold_cell),
+        Paragraph(f"<b>{_fmt(grand_in)}</b>", bold_cell),
+        Paragraph(f"<b>{_fmt(grand_out)}</b>", bold_cell),
+        Paragraph(f"<b>{_fmt(grand_total)}</b>", bold_cell),
+    ])
+
+    col_widths = [55*mm, 38*mm, 38*mm, 38*mm]
+    token_table = Table(table_data, colWidths=col_widths)
+
+    last_row = len(table_data) - 1
+    tbl_style = [
+        ('BACKGROUND', (0, 0), (-1, 0), AMBER),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BACKGROUND', (0, last_row), (-1, last_row), colors.HexColor('#fdf6e3')),
+        ('FONTNAME', (0, last_row), (-1, last_row), CJK_BOLD),
+        ('LINEABOVE', (0, last_row), (-1, last_row), 1, AMBER),
+    ]
+    token_table.setStyle(TableStyle(tbl_style))
+    story.append(token_table)
+    story.append(Spacer(1, 10*mm))
+
+
+def generate_analysis_report(content, start_date, end_date, period_tokens=None, report_tokens=None):
     """
     Generate PDF from markdown content for multi-day analysis report.
 
@@ -682,6 +750,8 @@ def generate_analysis_report(content, start_date, end_date):
         content: Markdown formatted report content
         start_date: Report period start date
         end_date: Report period end date
+        period_tokens: dict with input/output/total for patrol runs in the period
+        report_tokens: dict with input/output/total for this report's generation
 
     Returns:
         PDF bytes
@@ -711,6 +781,14 @@ def generate_analysis_report(content, start_date, end_date):
         styles['SmallText']
     ))
     story.append(Spacer(1, 20*mm))
+
+    # === Token Usage Summary ===
+    if period_tokens or report_tokens:
+        _build_analysis_token_table(
+            story, styles,
+            period_tokens or {'input': 0, 'output': 0, 'total': 0},
+            report_tokens or {'input': 0, 'output': 0, 'total': 0}
+        )
 
     # === Report Content (Markdown) ===
     story.append(Paragraph("Analysis Report", styles['SectionHeader']))
@@ -841,6 +919,14 @@ def generate_patrol_report(run_id):
         story.append(Paragraph("No report generated.", styles['CJKNormal']))
 
     story.append(Spacer(1, 10*mm))
+
+    # === Video Analysis ===
+    video_analysis = run_dict.get('video_analysis')
+    if video_analysis:
+        story.append(Paragraph("Video Analysis (影片分析)", styles['SectionHeader']))
+        va_flowables = markdown_to_flowables(video_analysis, styles)
+        story.extend(va_flowables)
+        story.append(Spacer(1, 10*mm))
 
     # === Inspection Points ===
     story.append(Paragraph(f"Inspection Points ({len(inspections)})", styles['SectionHeader']))

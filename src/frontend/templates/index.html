@@ -28,6 +28,7 @@
                 <button class="tab-btn" onclick="switchTab('patrol')">Patrol</button>
                 <button class="tab-btn active" onclick="switchTab('control')">Control</button>
                 <button class="tab-btn" onclick="switchTab('history')">History</button>
+                <button class="tab-btn" onclick="switchTab('reports')">Reports</button>
                 <button class="tab-btn" onclick="switchTab('stats')">Stats</button>
                 <button class="tab-btn" onclick="switchTab('settings')">Settings</button>
             </div>
@@ -301,43 +302,29 @@
                         <select id="history-robot-filter" style="width: auto; padding: 8px 12px;">
                             <option value="">All Robots</option>
                         </select>
-                        <input type="date" id="history-start-date" title="Start Date">
-                        <span style="color: var(--text-muted);">to</span>
-                        <input type="date" id="history-end-date" title="End Date">
-                        <button id="btn-generate-report" class="btn-premium" style="padding: 8px 16px;">
-                            <span class="icon">✨</span> Generate Report
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Report Result Container -->
-                <div id="generated-report-container" class="glass-panel"
-                    style="display: none; margin-bottom: 20px; border: 1px solid var(--cyan-dim);">
-                    <div
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
-                        <h3 style="margin: 0; color: var(--cyan-glow);">Analysis Report</h3>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <button onclick="saveGeneratedReportAsPDF()" class="btn-primary"
-                                style="padding: 6px 12px; font-size: 11px;">
-                                📄 Save PDF
-                            </button>
-                            <button onclick="closeGeneratedReport()"
-                                style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 18px;">&times;</button>
-                        </div>
-                    </div>
-                    <div id="generated-report-content" class="markdown-content"
-                        style="max-height: 300px; overflow-y: auto; color: var(--text-primary);"></div>
-                    <div class="stats-footer"
-                        style="margin-top: 12px; font-size: 11px; color: var(--text-muted); display: flex; gap: 12px;">
-                        <span>Prompt Tokens: <b id="report-prompt-tokens"
-                                style="color: var(--text-normal);">0</b></span>
-                        <span>output Tokens: <b id="report-completion-tokens"
-                                style="color: var(--text-normal);">0</b></span>
-                        <span>Total Cost: <b id="report-total-tokens" style="color: var(--cyan-dim);">0</b></span>
                     </div>
                 </div>
 
                 <div id="history-list" class="glass-panel"></div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 REPORTS VIEW
+                 ═══════════════════════════════════════════════════════════════ -->
+            <div id="view-reports" class="tab-content" style="display: none;">
+                <div class="header">
+                    <h1>Multi-run Reports</h1>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <input type="date" id="report-start-date" title="Start Date">
+                        <span style="color: var(--text-muted);">to</span>
+                        <input type="date" id="report-end-date" title="End Date">
+                        <button id="btn-generate-report" class="btn-premium" style="padding: 8px 16px;">
+                            <span class="icon">&#x2728;</span> Generate Report
+                        </button>
+                    </div>
+                </div>
+
+                <div id="reports-list"></div>
             </div>
 
             <!-- History Detail Modal -->
@@ -360,6 +347,13 @@
                             <div id="modal-report-content" class="markdown-content"
                                 style="background: var(--deep-space); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
                             </div>
+                        </div>
+                        <div id="modal-video-section" style="display: none; margin-bottom: 24px;">
+                            <h3>Video Analysis</h3>
+                            <div id="modal-video-content" class="markdown-content"
+                                style="background: var(--deep-space); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                            </div>
+                            <div id="modal-video-download" style="margin-top: 10px;"></div>
                         </div>
                         <div>
                             <h3>Inspection Points</h3>
@@ -482,10 +476,6 @@
                             <label>Telegram User ID</label>
                             <input type="text" id="setting-telegram-user-id" placeholder="e.g. 123456789">
                         </div>
-                        <div class="form-group">
-                            <label>Telegram Message Prompt</label>
-                            <textarea id="setting-telegram-message-prompt" rows="4" placeholder="Prompt for generating concise Telegram notification messages..."></textarea>
-                        </div>
                     </div>
                 </div>
 
@@ -518,6 +508,10 @@
                             <label>Multiday Report Prompt (Date Range)</label>
                             <textarea id="setting-multiday-report-prompt" rows="4" placeholder="Custom instructions for aggregated report generation..."></textarea>
                         </div>
+                        <div class="form-group">
+                            <label>Telegram Message Prompt</label>
+                            <textarea id="setting-telegram-message-prompt" rows="4" placeholder="Prompt for generating concise Telegram notification messages..."></textarea>
+                        </div>
                     </div>
                 </div>
 
@@ -529,6 +523,9 @@
                         <div class="form-group" style="flex-direction: row; align-items: center; gap: 12px;">
                             <input type="checkbox" id="setting-enable-edge-ai" style="width: auto;">
                             <label for="setting-enable-edge-ai" style="margin: 0; cursor: pointer;">Enable Edge AI Monitoring</label>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: -8px; padding: 0 4px; line-height: 1.5;">
+                            使用此功能請確認程式已部署於 Jetson 上。啟動巡邏時會有約一分鐘的等待時間以確保影像串流建立。
                         </div>
                         <div class="form-group">
                             <label>Stream Source</label>
@@ -554,7 +551,7 @@
                         </div>
 
                         <div class="form-group" style="margin-top: 8px;">
-                            <button id="btn-test-edge-ai" class="btn" onclick="testEdgeAI()">Test Edge AI</button>
+                            <button id="btn-test-edge-ai" class="btn-premium" onclick="testEdgeAI()">Test Edge AI</button>
                             <span id="edge-ai-test-status" style="margin-left: 8px; font-size: 12px; color: var(--text-muted);"></span>
                         </div>
                         <div id="edge-ai-test-results" style="display:none; margin-top: 8px; max-height: 500px; overflow-y: auto; border: 1px solid var(--border-subtle); border-radius: 6px; padding: 8px; background: var(--bg-secondary); font-size: 12px;">

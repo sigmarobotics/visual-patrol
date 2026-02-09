@@ -113,6 +113,18 @@ def update_run_tokens(run_id):
               totals['total_tokens'], run_id))
 
 
+def get_generated_reports():
+    """Get all generated reports ordered by timestamp DESC."""
+    with db_context() as (conn, cursor):
+        cursor.execute('''
+            SELECT id, start_date, end_date, report_content,
+                   input_tokens, output_tokens, total_tokens, timestamp, robot_id
+            FROM generated_reports
+            ORDER BY timestamp DESC
+        ''')
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def save_generated_report(start_date, end_date, content, usage, robot_id=None):
     """Save AI generated report to database."""
     with db_context() as (conn, cursor):

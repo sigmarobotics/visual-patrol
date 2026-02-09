@@ -7,6 +7,7 @@ import { initPoints, loadPoints } from './points.js';
 import { initPatrol } from './patrol.js';
 import { initSchedule, loadSchedule } from './schedule.js';
 import { initHistory, loadHistory } from './history.js';
+import { initReports, loadReports } from './reports.js';
 import { initSettings, loadSettings } from './settings.js';
 import { initStats, loadStats } from './stats.js';
 
@@ -22,11 +23,13 @@ window.switchTab = function (tabName) {
     if (tabName === 'patrol' && btns[0]) btns[0].classList.add('active');
     if (tabName === 'control' && btns[1]) btns[1].classList.add('active');
     if (tabName === 'history' && btns[2]) btns[2].classList.add('active');
-    if (tabName === 'stats' && btns[3]) btns[3].classList.add('active');
-    if (tabName === 'settings' && btns[4]) btns[4].classList.add('active');
+    if (tabName === 'reports' && btns[3]) btns[3].classList.add('active');
+    if (tabName === 'stats' && btns[4]) btns[4].classList.add('active');
+    if (tabName === 'settings' && btns[5]) btns[5].classList.add('active');
 
     // Load specific data
     if (tabName === 'history') loadHistory();
+    if (tabName === 'reports') loadReports();
     if (tabName === 'stats') loadStats();
     if (tabName === 'settings') loadSettings();
 
@@ -183,6 +186,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initPatrol();
     initSchedule();
     initHistory();
+    initReports();
     initSettings();
     initStats();
 

@@ -15,7 +15,7 @@ from config import *
 from config import _LEGACY_SETTINGS_FILE, _LEGACY_IMAGES_DIR
 from utils import load_json, save_json
 from database import (
-    init_db, db_context, save_generated_report,
+    init_db, db_context, save_generated_report, get_generated_reports,
     register_robot, backfill_robot_id, update_robot_heartbeat, get_all_robots
 )
 
@@ -695,6 +695,11 @@ def get_token_usage_stats():
     return jsonify(results)
 
 
+@app.route('/api/reports', methods=['GET'])
+def list_reports():
+    return jsonify(get_generated_reports())
+
+
 @app.route('/api/reports/generate', methods=['POST'])
 def generate_report_route():
     data = request.json
@@ -755,7 +760,7 @@ def generate_report_route():
         # 4. Save to Database
         report_id = save_generated_report(
             start_date, end_date, response['result'], response['usage'],
-            robot_id=report_robot_id or ROBOT_ID
+            robot_id=report_robot_id
         )
 
         return jsonify({
@@ -783,7 +788,8 @@ def generate_multiday_report_pdf():
         # Fetch the most recent generated report for this date range
         with db_context() as (conn, cursor):
             cursor.execute('''
-                SELECT report_content FROM generated_reports
+                SELECT report_content, input_tokens, output_tokens, total_tokens
+                FROM generated_reports
                 WHERE start_date = ? AND end_date = ?
                 ORDER BY timestamp DESC LIMIT 1
             ''', (start_date, end_date))
@@ -794,11 +800,41 @@ def generate_multiday_report_pdf():
 
         report_content = row['report_content']
 
+        # This report's own token usage
+        report_tokens = {
+            'input': row['input_tokens'] or 0,
+            'output': row['output_tokens'] or 0,
+            'total': row['total_tokens'] or 0,
+        }
+
+        # Period patrol token totals (inspection + per-run report generation)
+        query_start = f"{start_date} 00:00:00"
+        query_end = f"{end_date} 23:59:59"
+
+        with db_context() as (conn, cursor):
+            cursor.execute('''
+                SELECT
+                    COALESCE(SUM(input_tokens), 0) as input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as output_tokens,
+                    COALESCE(SUM(total_tokens), 0) as total_tokens
+                FROM patrol_runs
+                WHERE start_time BETWEEN ? AND ?
+            ''', (query_start, query_end))
+            pr = cursor.fetchone()
+
+        period_tokens = {
+            'input': pr['input_tokens'] if pr else 0,
+            'output': pr['output_tokens'] if pr else 0,
+            'total': pr['total_tokens'] if pr else 0,
+        }
+
         # Generate PDF
         pdf_bytes = generate_analysis_report(
             content=report_content,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            period_tokens=period_tokens,
+            report_tokens=report_tokens
         )
 
         # Return PDF file
@@ -859,6 +895,26 @@ def get_history_detail(run_id):
         "inspections": [dict(i) for i in inspections],
         "edge_ai_alerts": [dict(a) for a in edge_ai_alerts]
     })
+
+@app.route('/api/video/<int:run_id>')
+def download_video(run_id):
+    """Download the recorded video for a patrol run."""
+    with db_context() as (conn, cursor):
+        cursor.execute('SELECT video_path FROM patrol_runs WHERE id = ?', (run_id,))
+        row = cursor.fetchone()
+
+    if not row or not row['video_path']:
+        return jsonify({"error": "No video for this run"}), 404
+
+    video_path = row['video_path']
+    if not os.path.isabs(video_path):
+        video_path = os.path.join(DATA_DIR, video_path)
+
+    if not os.path.exists(video_path):
+        return jsonify({"error": "Video file not found"}), 404
+
+    filename = os.path.basename(video_path)
+    return send_file(video_path, as_attachment=True, download_name=filename)
 
 @app.route('/api/report/<int:run_id>/pdf')
 def download_pdf_report(run_id):
