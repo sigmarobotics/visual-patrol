@@ -166,6 +166,17 @@ class RobotService:
             return client.get_robot_serial_number()
         return "unknown"
 
+    def get_error_codes(self):
+        """Get current robot error codes from Kachaka SDK."""
+        with self.client_lock:
+            client = self.client
+        if client:
+            try:
+                return client.get_robot_error_code()
+            except Exception:
+                return {}
+        return {}
+
     def get_locations(self):
         """Get all saved locations from the robot"""
         with self.client_lock:

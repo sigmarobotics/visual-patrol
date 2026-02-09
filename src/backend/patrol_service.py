@@ -443,12 +443,14 @@ class PatrolService:
                 logger.info(f"Moving to {i+1}/{len(to_patrol)}: {point_name}")
 
                 # Move to point
-                move_status = self._move_to_point(point)
+                move_result = self._move_to_point(point)
 
-                if move_status != "Success":
+                if not move_result["success"]:
+                    move_status = f"Error: {move_result['error_code']} - {move_result['title']}"
                     self._save_inspection(
                         self.current_run_id, point, point_name, "",
-                        {'result_text': "Move Failed", 'is_ng': True, 'description': move_status,
+                        {'result_text': "Move Failed", 'is_ng': True,
+                         'description': f"{move_result['title']}: {move_result['description']}",
                          'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0, 'usage_json': '{}'},
                         "", move_status
                     )
@@ -581,21 +583,33 @@ class PatrolService:
             self.is_patrolling = False
 
     def _move_to_point(self, point):
-        """Move robot to patrol point. Returns status string."""
+        """Move robot to patrol point. Returns dict with success, error_code, title, description."""
         if not robot_service.get_client():
-            return "Error: Disconnected"
+            return {"success": False, "error_code": -1, "title": "Disconnected", "description": "Robot not connected"}
 
         try:
             result = robot_service.move_to(
                 float(point['x']), float(point['y']),
                 float(point.get('theta', 0.0)), wait=True
             )
-            if result and getattr(result, 'success', False):
-                return "Success"
-            error_code = getattr(result, 'error_code', 'Unknown') if result else 'No Result'
-            return f"Error: {error_code}"
+            if result and result.error_code == 0:
+                return {"success": True}
+
+            error_code = result.error_code if result else -1
+            title, description = "", ""
+            try:
+                errors = robot_service.get_error_codes()
+                if error_code in errors:
+                    title = errors[error_code].title_en
+                    description = errors[error_code].description_en
+            except Exception:
+                pass
+
+            logger.warning(f"Move failed: error_code={error_code}, title={title}, description={description}")
+            return {"success": False, "error_code": error_code, "title": title, "description": description}
         except Exception as e:
-            return f"Error: {e}"
+            logger.error(f"Move exception: {e}")
+            return {"success": False, "error_code": -1, "title": "Exception", "description": str(e)}
 
     def _inspect_point(self, point, point_name, run_images_dir, settings, turbo_mode, inspections_data):
         """Capture image and run AI inspection."""

@@ -596,7 +596,7 @@ def get_patrol_results():
 
     with db_context() as (conn, cursor):
         cursor.execute(
-            'SELECT point_name, ai_response, timestamp FROM inspection_results WHERE run_id = ? ORDER BY id ASC',
+            'SELECT point_name, ai_response, timestamp, robot_moving_status, ai_description FROM inspection_results WHERE run_id = ? ORDER BY id ASC',
             (current_run_id,)
         )
         rows = cursor.fetchall()
@@ -606,7 +606,9 @@ def get_patrol_results():
         results.append({
             "point_name": row[0],
             "result": row[1],
-            "timestamp": row[2]
+            "timestamp": row[2],
+            "robot_moving_status": row[3],
+            "ai_description": row[4]
         })
     return jsonify(results)
 

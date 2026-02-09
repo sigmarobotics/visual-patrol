@@ -98,7 +98,19 @@ export async function loadResults() {
             card.style.padding = '8px';
             card.style.borderRadius = '4px';
 
-            const resultHTML = renderAIResultHTML(r.result);
+            const isMoveFailure = r.robot_moving_status && r.robot_moving_status !== 'Success';
+            let resultHTML = '';
+            if (isMoveFailure) {
+                resultHTML = `
+                    <div class="ai-result-row" style="margin-top:5px;">
+                        <div class="status-indicator ng">NG</div>
+                        <div class="status-text" style="color:#dc3545;">${escapeHtml(r.robot_moving_status)}</div>
+                    </div>
+                    ${r.ai_description ? `<div style="color:#666; font-size:0.8rem; margin-top:4px;">${escapeHtml(r.ai_description)}</div>` : ''}
+                `;
+            } else {
+                resultHTML = renderAIResultHTML(r.result);
+            }
 
             card.innerHTML = `
                  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
@@ -116,7 +128,19 @@ export async function loadResults() {
     latestBoxes.forEach(latestBox => {
         if (results.length > 0) {
             const newest = results[results.length - 1];
-            const resultHTML = renderAIResultHTML(newest.result);
+            const isMoveFailure = newest.robot_moving_status && newest.robot_moving_status !== 'Success';
+            let resultHTML = '';
+            if (isMoveFailure) {
+                resultHTML = `
+                    <div class="ai-result-row" style="margin-top:5px;">
+                        <div class="status-indicator ng">NG</div>
+                        <div class="status-text" style="color:#dc3545;">${escapeHtml(newest.robot_moving_status)}</div>
+                    </div>
+                    ${newest.ai_description ? `<div style="color:#666; font-size:0.8rem; margin-top:4px;">${escapeHtml(newest.ai_description)}</div>` : ''}
+                `;
+            } else {
+                resultHTML = renderAIResultHTML(newest.result);
+            }
 
             latestBox.style.display = "";
             latestBox.style.alignItems = "";

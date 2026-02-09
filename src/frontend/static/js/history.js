@@ -209,7 +209,20 @@ async function viewHistoryDetail(runId) {
                     imgHtml = `<img src="${encodeURI(imgBase + ins.image_path)}" style="width:120px; height:auto; border-radius:4px; border:1px solid #ccc;">`;
                 }
 
-                const resultHTML = renderAIResultHTML(ins.ai_response);
+                const isMoveFailure = ins.robot_moving_status && ins.robot_moving_status !== 'Success';
+                let resultBlock = '';
+
+                if (isMoveFailure) {
+                    resultBlock = `
+                        <div class="ai-result-row" style="margin-top:5px;">
+                            <div class="status-indicator ng">NG</div>
+                            <div class="status-text" style="color:#dc3545;">${escapeHtml(ins.robot_moving_status)}</div>
+                        </div>
+                        ${ins.ai_description ? `<div style="color:#666; font-size:0.8rem; margin-top:4px;">${escapeHtml(ins.ai_description)}</div>` : ''}
+                    `;
+                } else {
+                    resultBlock = renderAIResultHTML(ins.ai_response);
+                }
 
                 item.innerHTML = `
                     ${imgHtml}
@@ -218,7 +231,7 @@ async function viewHistoryDetail(runId) {
                         <div style="font-size:0.8rem; color:#555; margin-bottom:6px;">${escapeHtml(ins.timestamp)}</div>
                         <div style="background:rgba(0,0,0,0.03); padding:6px; border-radius:4px; font-size:0.85rem;">
                             <div style="color:#555; font-style:italic; margin-bottom:4px;">Q: ${escapeHtml(ins.prompt)}</div>
-                            ${resultHTML}
+                            ${resultBlock}
                         </div>
                     </div>
                 `;
