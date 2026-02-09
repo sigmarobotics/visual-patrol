@@ -427,7 +427,6 @@ class TestLiveMonitor:
         self._stream_id = None
         self._relay_key = None
         self._config = None
-        self._use_relay_service = False
 
     def start(self, config):
         """Start test monitor: relay → JPS → WebSocket.
@@ -488,37 +487,26 @@ class TestLiveMonitor:
         mediamtx_internal = config["mediamtx_internal"]
         mediamtx_external = config["mediamtx_external"]
 
-        # 1. Start relay (ffmpeg → mediamtx)
-        from relay_manager import relay_manager, relay_service_client, wait_for_stream
-
-        use_relay_service = relay_service_client and relay_service_client.is_available()
-        self._use_relay_service = use_relay_service
-
-        if relay_service_client and not use_relay_service:
-            logger.warning("Relay service configured but not reachable, falling back to local RelayManager")
+        # 1. Start relay (ffmpeg → mediamtx) via Jetson relay service
+        from relay_manager import relay_service_client
 
         try:
+            if not relay_service_client:
+                raise RuntimeError("Relay service not configured (RELAY_SERVICE_URL empty)")
+
             if stream_source == "external_rtsp":
                 ext_url = config.get("external_rtsp_url", "")
                 self._relay_key = f"{robot_id}/external"
-                if use_relay_service:
-                    rtsp_path, err = relay_service_client.start_relay(self._relay_key, "external_rtsp", source_url=ext_url)
-                    if err:
-                        raise RuntimeError(err)
-                else:
-                    rtsp_path = relay_manager.start_external_rtsp_relay(
-                        robot_id, ext_url, mediamtx_internal)
+                rtsp_path, err = relay_service_client.start_relay(self._relay_key, "external_rtsp", source_url=ext_url)
+                if err:
+                    raise RuntimeError(err)
             else:
                 frame_func = config.get("frame_func")
                 self._relay_key = f"{robot_id}/camera"
-                if use_relay_service:
-                    rtsp_path, err = relay_service_client.start_relay(self._relay_key, "robot_camera")
-                    if err:
-                        raise RuntimeError(err)
-                    relay_service_client.start_frame_feeder(self._relay_key, frame_func)
-                else:
-                    rtsp_path = relay_manager.start_robot_camera_relay(
-                        robot_id, frame_func, mediamtx_internal)
+                rtsp_path, err = relay_service_client.start_relay(self._relay_key, "robot_camera")
+                if err:
+                    raise RuntimeError(err)
+                relay_service_client.start_frame_feeder(self._relay_key, frame_func)
         except Exception as e:
             with self._lock:
                 self.error = f"Relay start failed: {e}"
@@ -527,16 +515,12 @@ class TestLiveMonitor:
             return
 
         rtsp_url_for_jps = f"rtsp://{mediamtx_external}{rtsp_path}"
-        rtsp_check_url = f"rtsp://{mediamtx_internal}{rtsp_path}"
         logger.info(f"Relay started: JPS will pull from {rtsp_url_for_jps}")
 
         # 2. Wait for stream on mediamtx
         if not self.is_running:
             return
-        if use_relay_service:
-            stream_ready = relay_service_client.wait_for_stream(self._relay_key, timeout=20)
-        else:
-            stream_ready = wait_for_stream(rtsp_check_url, max_wait=20)
+        stream_ready = relay_service_client.wait_for_stream(self._relay_key, timeout=20)
         if not stream_ready:
             with self._lock:
                 self.error = "Relay stream not available on mediamtx (timeout 20s)"
@@ -671,14 +655,10 @@ class TestLiveMonitor:
         """Stop only the relay started by this test."""
         if self._relay_key:
             try:
-                if getattr(self, '_use_relay_service', False):
-                    from relay_manager import relay_service_client
-                    if relay_service_client:
-                        relay_service_client.stop_frame_feeder(self._relay_key)
-                        relay_service_client.stop_relay(self._relay_key)
-                else:
-                    from relay_manager import relay_manager
-                    relay_manager.stop_relay(self._relay_key)
+                from relay_manager import relay_service_client
+                if relay_service_client:
+                    relay_service_client.stop_frame_feeder(self._relay_key)
+                    relay_service_client.stop_relay(self._relay_key)
             except Exception as e:
                 logger.warning(f"Relay stop failed: {e}")
             self._relay_key = None

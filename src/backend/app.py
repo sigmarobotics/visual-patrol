@@ -32,7 +32,7 @@ from robot_service import robot_service
 from patrol_service import patrol_service
 from cloud_ai_service import ai_service
 from edge_ai_service import test_edge_ai
-from relay_manager import relay_manager
+from relay_manager import relay_service_client
 from pdf_service import generate_patrol_report, generate_analysis_report
 
 import logging
@@ -268,22 +268,32 @@ def test_edge_ai_snapshot():
 
 @app.route('/api/relay/status', methods=['GET'])
 def relay_status():
-    return jsonify(relay_manager.get_status())
+    if not relay_service_client:
+        return jsonify({})
+    return jsonify(relay_service_client.get_status())
 
 
 @app.route('/api/relay/test', methods=['POST'])
 def relay_test():
-    """Quick test: start robot camera relay, wait 3s, check status, stop."""
-    from config import MEDIAMTX_INTERNAL
+    """Quick test: start robot camera relay via relay service, wait 3s, check status, stop."""
+    if not relay_service_client:
+        return jsonify({"error": "Relay service not configured (RELAY_SERVICE_URL empty)"}), 400
+    key = f"{ROBOT_ID}/camera"
     try:
-        rtsp_path = relay_manager.start_robot_camera_relay(
-            ROBOT_ID, robot_service.get_front_camera_image, MEDIAMTX_INTERNAL)
+        rtsp_path, err = relay_service_client.start_relay(key, "robot_camera")
+        if err:
+            return jsonify({"error": err}), 500
+        relay_service_client.start_frame_feeder(key, robot_service.get_front_camera_image)
         time.sleep(3)
-        status = relay_manager.get_status()
-        relay_manager.stop_all()
+        status = relay_service_client.get_status()
+        relay_service_client.stop_frame_feeder(key)
+        relay_service_client.stop_relay(key)
         return jsonify({"rtsp_path": rtsp_path, "status": status})
     except Exception as e:
-        relay_manager.stop_all()
+        try:
+            relay_service_client.stop_all()
+        except Exception:
+            pass
         return jsonify({"error": str(e)}), 500
 
 

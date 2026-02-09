@@ -6,11 +6,7 @@ ROBOT_ID = os.getenv("ROBOT_ID", "default")
 ROBOT_NAME = os.getenv("ROBOT_NAME", "Robot")
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.133:26400")
 
-# mediamtx RTSP relay
-MEDIAMTX_INTERNAL = os.getenv("MEDIAMTX_INTERNAL", "localhost:8554")
-MEDIAMTX_EXTERNAL = os.getenv("MEDIAMTX_EXTERNAL", "localhost:8554")
-
-# Relay service (Jetson-side ffmpeg relay, empty = use local RelayManager)
+# Relay service (Jetson-side ffmpeg relay, empty = relay not available)
 RELAY_SERVICE_URL = os.getenv("RELAY_SERVICE_URL", "")
 
 # Jetson service ports (fixed, co-located on Jetson)

@@ -96,8 +96,7 @@ Add a new service to `docker-compose.yml`:
       - ROBOT_ID=robot-d
       - ROBOT_NAME=Robot D
       - ROBOT_IP=192.168.50.135:26400
-      - MEDIAMTX_INTERNAL=mediamtx:8554
-      - MEDIAMTX_EXTERNAL=localhost:8554
+      - RELAY_SERVICE_URL=http://192.168.50.35:5020
     restart: unless-stopped
 ```
 

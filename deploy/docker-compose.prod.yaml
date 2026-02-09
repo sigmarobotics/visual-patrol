@@ -22,8 +22,6 @@ services:
       - ROBOT_ID=robot-a
       - ROBOT_NAME=Robot A
       - ROBOT_IP=192.168.50.133:26400
-      - MEDIAMTX_INTERNAL=localhost:8555
-      - MEDIAMTX_EXTERNAL=localhost:8555
       - RELAY_SERVICE_URL=http://localhost:5020
     restart: unless-stopped
     healthcheck:
@@ -63,6 +61,5 @@ services:
   #     - ROBOT_ID=robot-b
   #     - ROBOT_NAME=Robot B
   #     - ROBOT_IP=192.168.50.134:26400
-  #     - MEDIAMTX_INTERNAL=localhost:8555
-  #     - MEDIAMTX_EXTERNAL=localhost:8555
+  #     - RELAY_SERVICE_URL=http://localhost:5020
   #   restart: unless-stopped
