@@ -93,7 +93,7 @@
 
 ### POST `/api/{id}/return_home`
 
-命令機器人返回充電座。
+命令機器人返回充電站。
 
 **回應：**
 ```json
@@ -111,15 +111,15 @@
 
 ### GET `/api/{id}/camera/front`
 
-回傳機器人前置鏡頭的 MJPEG 串流。
+回傳機器人前方攝影機的 MJPEG 串流。畫面來自 frame_hub 快取。
 
-**回應：** `multipart/x-mixed-replace; boundary=frame` (連續 JPEG 串流，約 20fps)。
+**回應：** `multipart/x-mixed-replace; boundary=frame` (連續 JPEG 串流，約 10fps)。
 
 ### GET `/api/{id}/camera/back`
 
-回傳機器人後置鏡頭的 MJPEG 串流。
+回傳機器人後方攝影機的 MJPEG 串流。
 
-**回應：** 格式同前置鏡頭。
+**回應：** 格式同前方攝影機。
 
 ---
 
@@ -127,7 +127,7 @@
 
 ### POST `/api/{id}/test_ai`
 
-從前置鏡頭擷取影像並執行 AI 分析。
+從前方攝影機擷取畫面 (透過 frame_hub) 並執行 AI 分析。
 
 **請求：**
 ```json
@@ -151,27 +151,29 @@
 }
 ```
 
-**錯誤：** `503` (鏡頭不可用)、`500` (AI 錯誤)。
+**錯誤：** `503` (攝影機不可用)、`500` (AI 錯誤)。
 
 ---
 
 ## 即時監控測試 (機器人專屬)
 
+使用 VILA JPS 串流管線 (relay --> mediamtx --> JPS --> WebSocket 警報) 進行設定頁面的快速測試。
+
 ### POST `/api/{id}/test_edge_ai/start`
 
-啟動即時監控測試。啟動 relay、向 VILA JPS 註冊串流、設定警報規則，並監聽 WebSocket 警報。
+啟動即時監控測試工作階段。啟動 relay、向 VILA JPS 註冊串流、設定警報規則，並監聽 WebSocket 警報。
 
 **請求：**
 ```json
 {
   "jetson_host": "192.168.50.35",
-  "rules": ["有沒有人？", "有沒有異常？"],
+  "rules": ["Is there a person?", "Is there fire?"],
   "stream_source": "robot_camera",
   "external_rtsp_url": ""
 }
 ```
 
-所有欄位皆為選填，未提供時使用已儲存的設定值。
+所有欄位皆為選填 -- 未提供時使用已儲存的設定值。
 
 **回應：**
 ```json
@@ -182,7 +184,7 @@
 
 ### POST `/api/{id}/test_edge_ai/stop`
 
-停止執行中的測試。
+停止執行中的測試工作階段。
 
 **回應：**
 ```json
@@ -191,28 +193,27 @@
 
 ### GET `/api/{id}/test_edge_ai/status`
 
-返回目前測試狀態及結果。
+回傳目前測試工作階段狀態及結果。
 
 **回應：**
 ```json
 {
   "active": true,
-  "check_count": 3,
-  "error": null,
-  "results": [
+  "ws_connected": true,
+  "alert_count": 1,
+  "alerts": [
     {
-      "check_id": 1,
+      "rule": "Is there a person?",
       "timestamp": "2026-02-06 23:05:58",
-      "responses": [
-        { "rule": "有沒有人？", "answer": "0" },
-        { "rule": "有沒有異常？", "answer": "0" }
-      ]
+      "image": "data:image/jpeg;base64,..."
     }
-  ]
+  ],
+  "ws_messages": [
+    { "timestamp": "2026-02-06 23:05:58", "event": { "rule_string": "Is there a person?", "..." : "..." } }
+  ],
+  "error": null
 }
 ```
-
-**VILA 回應格式：** VILA 3B 以 `0` (否) 或 `1` (是) 回答，而非文字。前端會正規化為 `YES`/`NO` 顯示。後端的 `LiveMonitor` 將 `"yes"`、`"true"`、`"1"` 視為觸發警報。
 
 ---
 
@@ -261,9 +262,10 @@
   {
     "id": 1,
     "rule": "Is there a person lying on the floor?",
-    "response": "yes",
+    "response": "triggered",
     "image_path": "report/edge_ai_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
-    "timestamp": "2026-02-06 14:05:00"
+    "timestamp": "2026-02-06 14:05:00",
+    "stream_source": "robot_camera"
   }
 ]
 ```
@@ -439,6 +441,83 @@
 
 ---
 
+## 基礎設施端點 (全域)
+
+### GET `/api/relay/status`
+
+回傳所有啟用中 RTSP relay 程序的狀態。
+
+**回應：**
+```json
+{
+  "robot-a/camera": {
+    "type": "robot_camera",
+    "running": true,
+    "uptime": 125.3,
+    "restart_count": 0
+  },
+  "robot-a/external": {
+    "type": "external_rtsp",
+    "running": true,
+    "uptime": 124.8,
+    "restart_count": 0
+  }
+}
+```
+
+無 relay 啟用時回傳 `{}`。
+
+### POST `/api/relay/test`
+
+快速測試機器人攝影機 relay。啟動 relay，等待 3 秒，檢查狀態，然後停止。
+
+**回應 (成功)：**
+```json
+{
+  "status": "ok",
+  "relay_status": {
+    "robot-a/camera": {
+      "type": "robot_camera",
+      "running": true,
+      "uptime": 3.1,
+      "restart_count": 0
+    }
+  }
+}
+```
+
+**回應 (失敗)：**
+```json
+{
+  "status": "error",
+  "error": "Camera not available"
+}
+```
+
+### GET `/api/edge_ai/health`
+
+透過從 `jetson_host` 衍生 JPS URL 並呼叫 `GET http://{jetson_host}:5010/api/v1/health/ready`，檢查 VILA JPS API 健康狀態。
+
+**回應 (健康)：**
+```json
+{
+  "status": "ok",
+  "code": 200
+}
+```
+
+**回應 (不健康)：**
+```json
+{
+  "status": "error",
+  "error": "Connection refused"
+}
+```
+
+**錯誤：** `400` 若 `jetson_host` 未設定。
+
+---
+
 ## 全域端點
 
 ### GET/POST `/api/settings`
@@ -451,7 +530,7 @@
 ```json
 {
   "gemini_api_key": "****abcd",
-  "gemini_model": "gemini-2.0-flash",
+  "gemini_model": "gemini-3-flash-preview",
   "timezone": "Asia/Taipei",
   "system_prompt": "You are a helpful robot assistant...",
   "report_prompt": "...",
@@ -465,7 +544,11 @@
   "telegram_user_id": "",
   "telegram_message_prompt": "Based on the patrol inspection results below...",
   "enable_edge_ai": false,
-  "edge_ai_rules": ["有沒有人？", "有沒有異常？"]
+  "edge_ai_rules": ["Is there a person?", "Is there fire?"],
+  "jetson_host": "192.168.50.35",
+  "enable_robot_camera_relay": false,
+  "enable_external_rtsp": false,
+  "external_rtsp_url": ""
 }
 ```
 
@@ -505,21 +588,24 @@
     "status": "Completed",
     "robot_serial": "KAC-001",
     "report_content": "All points inspected...",
-    "model_id": "gemini-2.0-flash",
+    "model_id": "gemini-3-flash-preview",
     "total_tokens": 1234,
+    "video_path": "video/42_20260206_140000.mp4",
     "robot_id": "robot-a"
   }
 ]
 ```
 
+`video_path` 欄位：若有錄影則為路徑字串，否則為 `null`。前端可據此顯示影片圖示。
+
 ### GET `/api/history/{run_id}`
 
-回傳巡檢詳細資料及所有檢查結果。
+回傳巡檢詳細資料，含所有檢查結果及即時警報。
 
 **回應：**
 ```json
 {
-  "run": { "id": 42, "start_time": "...", "status": "Completed", ... },
+  "run": { "id": 42, "start_time": "...", "status": "Completed", "video_path": "...", "..." : "..." },
   "inspections": [
     {
       "id": 100,
@@ -541,10 +627,11 @@
       "id": 1,
       "run_id": 42,
       "rule": "Is there a person lying on the floor?",
-      "response": "yes",
+      "response": "triggered",
       "image_path": "report/edge_ai_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
       "timestamp": "2026-02-06 14:05:00",
-      "robot_id": "robot-a"
+      "robot_id": "robot-a",
+      "stream_source": "robot_camera"
     }
   ]
 }

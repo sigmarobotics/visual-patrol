@@ -8,26 +8,27 @@
 
 ```
 src/frontend/
-├── templates/
-│   └── index.html              # 主要 SPA 頁面 (所有視圖在同一檔案)
-└── static/
-    ├── favicon.png              # 應用程式 logo
-    ├── css/
-    │   └── style.css            # 所有樣式 (~48KB)
-    └── js/
-        ├── app.js               # 進入點、分頁切換、機器人選擇器
-        ├── state.js             # 共享可變狀態 (singleton)
-        ├── map.js               # Canvas 渲染、座標轉換
-        ├── controls.js          # 方向鍵手動控制
-        ├── ai.js                # AI 測試面板、結果解析
-        ├── points.js            # 巡檢點 CRUD、表格渲染
-        ├── patrol.js            # 巡檢啟動/停止、狀態輪詢
-        ├── schedule.js          # 排程巡檢管理
-        ├── history.js           # 巡檢歷史、詳細彈窗、報告
-        ├── settings.js          # 設定載入/儲存、時鐘
-        ├── stats.js             # Token 使用量圖表 (Chart.js)
-        ├── chart.min.js         # Chart.js (vendored，建置時下載)
-        └── marked.min.js        # Marked.js (vendored，建置時下載)
+|-- templates/
+|   +-- index.html              # 主要 SPA 頁面 (所有視圖在同一檔案)
++-- static/
+    |-- favicon.png              # 應用程式 logo
+    |-- css/
+    |   +-- style.css            # 所有樣式 (~48KB)
+    +-- js/
+        |-- app.js               # 進入點、分頁切換、機器人選擇器
+        |-- state.js             # 共享可變狀態 (singleton)
+        |-- map.js               # Canvas 渲染、座標轉換
+        |-- controls.js          # 方向鍵手動控制
+        |-- ai.js                # AI 測試面板、結果解析
+        |-- points.js            # 巡檢點 CRUD、表格渲染
+        |-- patrol.js            # 巡檢啟動/停止、狀態輪詢
+        |-- schedule.js          # 排程巡檢管理
+        |-- history.js           # 巡檢歷史、詳細彈窗
+        |-- reports.js           # 多日分析報告、日期範圍選擇器
+        |-- settings.js          # 設定載入/儲存、時鐘、即時監控測試
+        |-- stats.js             # Token 使用量圖表 (Chart.js)
+        |-- chart.min.js         # Chart.js (vendored，建置時下載)
+        +-- marked.min.js        # Marked.js (vendored，建置時下載)
 ```
 
 ## 模組相依圖
@@ -42,6 +43,7 @@ state.js  (不匯入任何模組)
     |--- patrol.js  ---> ai.js
     |--- schedule.js
     |--- history.js ---> ai.js
+    |--- reports.js
     |--- settings.js
     |--- stats.js   (不匯入 state，直接使用 DOM)
     |
@@ -81,7 +83,7 @@ const state = {
 
 ## 分頁系統
 
-應用程式有 5 個分頁：**Patrol**、**Control** (預設)、**History**、**Stats**、**Settings**。
+應用程式有 6 個分頁：**Patrol**、**Control** (預設)、**History**、**Reports**、**Tokens**、**Settings**。
 
 所有分頁視圖同時存在於 DOM 中。`switchTab(name)` 負責顯示/隱藏：
 
@@ -89,7 +91,7 @@ const state = {
 window.switchTab = function(tabName) {
     // 隱藏所有視圖
     // 顯示目標視圖
-    // 為資料密集的分頁載入資料 (history, stats, settings)
+    // 為資料密集的分頁載入資料 (history, reports, tokens, settings)
     // 在 Control 和 Patrol 視圖之間搬移地圖 canvas
 };
 ```
@@ -201,7 +203,7 @@ window.deletePoint = deletePoint;
 - 顯示最新 AI 分析結果
 - 顯示目前巡檢結果的可捲動歷史
 - 管理鏡頭串流 (巡檢期間啟用，閒置時選擇性啟用)
-- **即時警報面板**：當即時監控啟用時，每秒輪詢 `GET /api/{id}/patrol/edge_ai_alerts`，以紅色主題的可折疊面板顯示觸發的警報，含計數徽章
+- **即時警報面板**：當即時監控啟用時，每秒輪詢 `GET /api/{id}/patrol/edge_ai_alerts`，以紅色主題的可折疊面板顯示觸發的警報，含計數徽章。警報顯示規則、串流來源、時間戳記和證據圖片。
 
 ### `schedule.js` -- 排程巡檢
 
@@ -212,27 +214,59 @@ window.deletePoint = deletePoint;
 
 ### `history.js` -- 巡檢歷史
 
-- 列出所有過去的巡檢記錄，含狀態、時間、token 使用量
+- 列出所有過去的巡檢記錄，以卡片形式呈現，標題 "Run #N"
+- 有影片的巡檢顯示影片圖示
 - 機器人篩選下拉選單
 - 點擊檢視含 AI 摘要和巡檢圖片的詳細彈窗
-- 以日期範圍選擇器生成多日分析報告
-- 下載巡檢 PDF 和分析報告 PDF
+- 即時警報區段在詳細彈窗中顯示 (含 stream_source 標籤)
+- 下載巡檢 PDF
+- 使用 `marked.js` 渲染 Markdown 報告內容
+
+### `reports.js` -- 分析報告 (獨立分頁)
+
+- 獨立的 Reports 分頁，含日期範圍選擇器
+- 機器人篩選下拉選單
+- 產生多日 AI 分析報告
+- 下載分析報告 PDF
 - 使用 `marked.js` 渲染 Markdown 報告內容
 
 ### `settings.js` -- 設定面板
 
-- 透過 `/api/settings` 載入和儲存所有系統設定
+透過 `/api/settings` 載入和儲存所有系統設定。包含 3 個子分頁：
+
+#### General 子分頁
+- **時區**：下拉選擇 (UTC, Asia/Taipei, Asia/Tokyo, 等)
+- **Turbo 模式**：啟用/停用核取方塊
+- **閒置串流**：控制非巡檢時是否顯示鏡頭畫面
+- **Telegram 通知**：啟用/停用、Bot Token、User ID、訊息提示詞
+
+#### Gemini AI 子分頁
+- **API 金鑰**：輸入框 (敏感，遮罩顯示)
+- **模型**：Gemini 模型識別碼
+- **系統提示詞**：AI 巡檢的角色提示詞
+- **報告提示詞**：單次及多日報告提示詞
+- **錄影**：啟用/停用及影片分析提示詞
+
+#### VILA/Edge AI 子分頁
+- **啟用即時監控**：核取方塊
+- **串流來源**：單選按鈕 (Robot Camera / External RTSP) -- JPS 最多 1 個串流
+- **Jetson Host**：IP 位址輸入框 (自動衍生 JPS、mediamtx、relay、WS URL)
+- **外部 RTSP URL**：選擇 External RTSP 時顯示
+- **警報規則**：文字區域 (每行一條，最多 10 條)
+- **測試按鈕**：使用 JPS 流程 (relay --> mediamtx --> JPS --> WebSocket) 進行快速測試
+
+同時：
 - 顯示已註冊的機器人列表
 - 管理標頭時鐘 (使用已設定的時區)
-- 設定包含：API 金鑰、模型、時區、提示詞、功能開關、Telegram 設定
-- **即時監控設定**：僅在 VLM 供應商為 VILA 且已設定 Alert URL 時顯示。包含啟用核取方塊、檢查間隔 (2-30秒)、警報規則文字區域 (每行一條規則)
 
-### `stats.js` -- Token 使用量統計
+### `stats.js` -- Token 使用量 (Tokens 分頁)
 
+- 分頁名稱為 **Tokens** (非 Stats)
 - 從 `/api/stats/token_usage` 取得每日 token 使用量
-- 以 Chart.js 折線圖渲染 (輸入、輸出、總計 token)
+- 以 Chart.js 堆疊長條圖渲染 (輸入、輸出 token)
 - 含機器人篩選的日期範圍選擇器
-- 顯示所選期間總計的摘要卡片
+- 以百萬為單位顯示 token 總量並附定價資訊
+- 摘要卡片顯示所選期間的彙總統計
 
 ## 第三方函式庫
 

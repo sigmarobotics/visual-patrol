@@ -111,9 +111,9 @@ Cancel the robot's current movement command.
 
 ### GET `/api/{id}/camera/front`
 
-Returns an MJPEG stream from the robot's front camera.
+Returns an MJPEG stream from the robot's front camera (via frame_hub cache).
 
-**Response:** `multipart/x-mixed-replace; boundary=frame` (continuous JPEG stream at ~20fps).
+**Response:** `multipart/x-mixed-replace; boundary=frame` (continuous JPEG stream at ~10fps).
 
 ### GET `/api/{id}/camera/back`
 
@@ -157,11 +157,11 @@ Capture an image from the front camera and run AI analysis.
 
 ## Test Edge AI (robot-specific)
 
-Uses VILA JPS streaming pipeline (relay → mediamtx → JPS → WebSocket alerts) for quick testing from the settings page.
+Uses the VILA JPS streaming pipeline (relay -> mediamtx -> JPS -> WebSocket alerts) for quick testing from the settings page. No database writes -- alerts are kept in memory only.
 
 ### POST `/api/{id}/test_edge_ai/start`
 
-Start a test live monitor session. Starts relay, registers stream with VILA JPS, sets alert rules, and listens for WebSocket alerts.
+Start a test live monitor session. Starts the relay (frame_hub RTSP push for robot camera, or relay service for external RTSP), registers the stream with VILA JPS, sets alert rules, and connects a WebSocket listener for alert events.
 
 **Request:**
 ```json
@@ -175,16 +175,21 @@ Start a test live monitor session. Starts relay, registers stream with VILA JPS,
 
 All fields are optional -- falls back to saved settings if omitted.
 
+- `jetson_host`: Jetson device IP. Used to derive JPS URL (`http://{jetson_host}:5010`) and mediamtx address (`{jetson_host}:8555`).
+- `rules`: List of yes/no alert rule strings (max 10).
+- `stream_source`: Either `"robot_camera"` or `"external_rtsp"`.
+- `external_rtsp_url`: Required when `stream_source` is `"external_rtsp"`.
+
 **Response:**
 ```json
 { "status": "started" }
 ```
 
-**Errors:** `400` (missing URL or rules), `409` (test already running).
+**Errors:** `400` (missing jetson_host or rules), `409` (test already running), `500` (stream start failed).
 
 ### POST `/api/{id}/test_edge_ai/stop`
 
-Stop the running test session.
+Stop the running test session. Closes the WebSocket, deregisters the stream from JPS, and stops the relay.
 
 **Response:**
 ```json
@@ -193,26 +198,43 @@ Stop the running test session.
 
 ### GET `/api/{id}/test_edge_ai/status`
 
-Returns the current test session state and results.
+Returns the current test session state and collected alerts.
 
 **Response:**
 ```json
 {
   "active": true,
-  "check_count": 3,
-  "error": null,
-  "results": [
+  "ws_connected": true,
+  "alert_count": 2,
+  "alerts": [
     {
-      "check_id": 1,
+      "rule": "Is there a person?",
       "timestamp": "2026-02-06 23:05:58",
-      "responses": [
-        { "rule": "Is there a person?", "answer": "no" },
-        { "rule": "Is there fire?", "answer": "no" }
-      ]
+      "image": "data:image/jpeg;base64,/9j/4AAQ..."
     }
-  ]
+  ],
+  "ws_messages": [
+    {
+      "timestamp": "2026-02-06 23:05:58",
+      "event": { "rule_string": "Is there a person?", "stream_id": "abc123" }
+    }
+  ],
+  "error": null
 }
 ```
+
+- `active`: Whether the test session is running.
+- `ws_connected`: Whether the WebSocket connection to JPS is currently open.
+- `alert_count`: Total number of triggered alerts.
+- `alerts`: Array of alert objects. Each has `rule` (string), `timestamp` (string), and `image` (base64 data URI or null).
+- `ws_messages`: Raw WebSocket messages for debugging (max 200, newest last).
+- `error`: Error message string if the session encountered a fatal error, otherwise null.
+
+### GET `/api/{id}/test_edge_ai/snapshot`
+
+Returns the latest JPEG frame captured from the mediamtx RTSP relay, used for live preview in the settings page.
+
+**Response:** `image/jpeg` binary data, or `204 No Content` if no frame is available.
 
 ---
 
@@ -268,6 +290,8 @@ Returns live monitor alerts for the currently active patrol run. Returns empty l
   }
 ]
 ```
+
+- `stream_source`: One of `"robot_camera"`, `"external_rtsp"`, or `"unknown"`.
 
 Results are ordered newest first (`ORDER BY id DESC`).
 
@@ -444,19 +468,17 @@ Fetch saved locations from the Kachaka robot and merge with existing points. Ski
 
 ### GET `/api/relay/status`
 
-Returns the status of all active RTSP relay processes.
+Returns the status of all active RTSP relay processes from the Jetson relay service.
 
 **Response:**
 ```json
 {
   "robot-a/camera": {
-    "type": "robot_camera",
     "running": true,
     "uptime": 125.3,
     "restart_count": 0
   },
   "robot-a/external": {
-    "type": "external_rtsp",
     "running": true,
     "uptime": 124.8,
     "restart_count": 0
@@ -464,19 +486,20 @@ Returns the status of all active RTSP relay processes.
 }
 ```
 
-Returns `{}` when no relays are active (no patrol running with relay sources enabled).
+Returns `{}` when no relays are active or when `RELAY_SERVICE_URL` is not configured.
 
 ### POST `/api/relay/test`
 
-Quick-test the robot camera relay. Starts a relay, waits 3 seconds, checks status, then stops.
+Quick-test the robot camera relay pipeline. Starts frame_hub RTSP push to mediamtx, starts a relay via the relay service, waits 3 seconds, checks status, then stops both.
+
+Requires both `RELAY_SERVICE_URL` and `jetson_host` to be configured.
 
 **Response (success):**
 ```json
 {
-  "status": "ok",
-  "relay_status": {
+  "rtsp_path": "/robot-a/camera",
+  "status": {
     "robot-a/camera": {
-      "type": "robot_camera",
       "running": true,
       "uptime": 3.1,
       "restart_count": 0
@@ -488,14 +511,15 @@ Quick-test the robot camera relay. Starts a relay, waits 3 seconds, checks statu
 **Response (failure):**
 ```json
 {
-  "status": "error",
   "error": "Camera not available"
 }
 ```
 
+**Errors:** `400` (relay service or jetson_host not configured), `500` (relay start failed).
+
 ### GET `/api/edge_ai/health`
 
-Check VILA JPS API health by deriving the JPS URL from `jetson_host` and calling `GET http://{jetson_host}:5010/api/v1/health/ready`.
+Check VILA JPS API health by deriving the JPS URL from `jetson_host` setting and calling `GET http://{jetson_host}:5010/api/v1/health/ready`.
 
 **Response (healthy):**
 ```json
@@ -513,7 +537,7 @@ Check VILA JPS API health by deriving the JPS URL from `jetson_host` and calling
 }
 ```
 
-**Errors:** `400` if `jetson_host` is not configured.
+**Errors:** `400` if `jetson_host` is not configured, `503` if JPS is unreachable.
 
 ---
 
@@ -529,7 +553,7 @@ Check VILA JPS API health by deriving the JPS URL from `jetson_host` and calling
 ```json
 {
   "gemini_api_key": "****abcd",
-  "gemini_model": "gemini-2.0-flash",
+  "gemini_model": "gemini-3-flash-preview",
   "timezone": "Asia/Taipei",
   "system_prompt": "You are a helpful robot assistant...",
   "report_prompt": "...",
@@ -589,19 +613,22 @@ Returns all patrol runs, newest first.
     "report_content": "All points inspected...",
     "model_id": "gemini-2.0-flash",
     "total_tokens": 1234,
-    "robot_id": "robot-a"
+    "robot_id": "robot-a",
+    "video_path": "robot-a/report/video/42_20260206_140000.mp4"
   }
 ]
 ```
 
+The `video_path` field is a relative path to the recorded patrol video (if video recording was enabled), or `null` if no video was recorded.
+
 ### GET `/api/history/{run_id}`
 
-Returns detailed patrol run info with all inspection results and live alerts.
+Returns detailed patrol run info with all inspection results and edge AI alerts.
 
 **Response:**
 ```json
 {
-  "run": { "id": 42, "start_time": "...", "status": "Completed", "..." : "..." },
+  "run": { "id": 42, "start_time": "...", "status": "Completed", "video_path": "...", "..." : "..." },
   "inspections": [
     {
       "id": 100,
@@ -632,6 +659,14 @@ Returns detailed patrol run info with all inspection results and live alerts.
   ]
 }
 ```
+
+The `edge_ai_alerts` array includes a `stream_source` field on each alert indicating the origin: `"robot_camera"`, `"external_rtsp"`, or `"unknown"`.
+
+### GET `/api/video/{run_id}`
+
+Download the recorded video file for a patrol run.
+
+**Response:** Video file download, or `404` if no video exists for this run.
 
 ### GET `/api/report/{run_id}/pdf`
 

@@ -20,9 +20,20 @@ Set per-service in `docker-compose.yml` (dev) or `deploy/docker-compose.prod.yam
 | `LOG_DIR` | `{project}/logs` | Base directory for log files |
 | `PORT` | `5000` | Flask HTTP listen port (must be unique per robot in prod) |
 | `TZ` | (system default) | System timezone for Docker container |
-| `RELAY_SERVICE_URL` | `""` | Jetson relay service URL (empty = relay not available) |
+| `RELAY_SERVICE_URL` | `""` | Jetson relay service URL (e.g., `http://192.168.50.35:5020`). When empty, relay functionality is unavailable and live monitoring cannot start. |
 
 **Important:** `ROBOT_ID` must follow the pattern `robot-{name}` (e.g., `robot-a`, `robot-b`). In dev mode, the Docker service name must match the `ROBOT_ID` because nginx resolves backends by service name.
+
+### Jetson Service Ports (Constants)
+
+The following ports are defined as constants in `config.py` and are not configurable via environment variables. They correspond to fixed ports on the Jetson device:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `JETSON_JPS_API_PORT` | `5010` | VILA JPS REST API port |
+| `JETSON_MEDIAMTX_PORT` | `8555` | mediamtx RTSP server port |
+
+These ports are used together with the `jetson_host` setting to auto-derive full service URLs (e.g., `http://{jetson_host}:5010` for JPS, `{jetson_host}:8555` for mediamtx). The WebSocket port for JPS alerts is hardcoded to `5016` in `edge_ai_service.py`.
 
 ### Example (Dev)
 
@@ -65,7 +76,7 @@ Manage settings through the **Settings** tab in the web UI, or via the API:
 |---------|---------|-------------|
 | `gemini_api_key` | `""` | Google Gemini API key (sensitive, masked in GET) |
 | `gemini_model` | `"gemini-3-flash-preview"` | Gemini model identifier |
-| `system_prompt` | `"You are a helpful robot assistant..."` | System role prompt for AI inspection |
+| `system_prompt` | (Chinese inspection prompt) | System role prompt for AI inspection |
 
 ### Patrol Configuration
 
@@ -73,7 +84,7 @@ Manage settings through the **Settings** tab in the web UI, or via the API:
 |---------|---------|-------------|
 | `turbo_mode` | `false` | Async AI analysis -- robot moves to next point while previous image is analyzed |
 | `enable_video_recording` | `false` | Record video during patrol (uses OpenCV) |
-| `video_prompt` | `"Analyze this video..."` | Prompt for AI video analysis after patrol |
+| `video_prompt` | (Chinese video analysis prompt) | Prompt for AI video analysis after patrol |
 | `enable_idle_stream` | `true` | Show camera stream when not patrolling |
 
 ### Live Monitor (VILA JPS)
@@ -81,16 +92,23 @@ Manage settings through the **Settings** tab in the web UI, or via the API:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enable_edge_ai` | `false` | Enable live monitoring during patrol |
-| `jetson_host` | `""` | Jetson device IP address (auto-derives JPS, mediamtx, relay URLs) |
-| `enable_robot_camera_relay` | `false` | Relay robot camera (gRPC) to mediamtx via ffmpeg |
-| `enable_external_rtsp` | `false` | Relay an external RTSP camera to mediamtx |
+| `jetson_host` | `""` | Jetson device IP address (auto-derives JPS, mediamtx, relay, and WS URLs) |
+| `enable_robot_camera_relay` | `false` | Relay robot camera (gRPC frames via frame_hub) to mediamtx via ffmpeg |
+| `enable_external_rtsp` | `false` | Relay an external RTSP camera to mediamtx via the relay service |
 | `external_rtsp_url` | `""` | External RTSP source URL (e.g., `rtsp://admin:pass@192.168.50.45:554/live`) |
 | `edge_ai_rules` | `[]` | List of yes/no alert rule strings, max 10 (e.g., `["Is there a person?", "Is there fire?"]`) |
+
+The `jetson_host` setting is the single source of truth for all Jetson service addresses. When set (e.g., `192.168.50.35`), the system automatically derives:
+
+- **JPS API**: `http://{jetson_host}:5010`
+- **JPS WebSocket**: `ws://{jetson_host}:5016/api/v1/alerts/ws`
+- **mediamtx**: `{jetson_host}:8555`
+- **Relay service**: Configured separately via `RELAY_SERVICE_URL` env var (typically `http://localhost:5020` on Jetson)
 
 The live monitor requires at least one stream source (`enable_robot_camera_relay` or `enable_external_rtsp`) and `jetson_host` to be set. When enabled, the system:
 
 1. Starts ffmpeg relay processes to push camera streams to mediamtx
-2. Registers streams with VILA JPS
+2. Registers streams with VILA JPS via REST API
 3. Sets alert rules per stream
 4. Listens for WebSocket alert events
 5. Captures evidence frames and saves to DB + disk on triggered alerts
@@ -103,7 +121,7 @@ Each rule has a 60-second cooldown to prevent repeated alerts for the same condi
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `report_prompt` | (Chinese inspection table template) | Single patrol run report generation prompt |
-| `multiday_report_prompt` | `"Generate a comprehensive summary..."` | Multi-day aggregated report prompt |
+| `multiday_report_prompt` | (Chinese multi-day inspection table template) | Multi-day aggregated report prompt |
 
 The default `report_prompt` is a Chinese-language template that generates a structured inspection checklist table covering electrical safety, indoor environment, fire safety, and other categories.
 
@@ -111,7 +129,7 @@ The default `report_prompt` is a Chinese-language template that generates a stru
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `timezone` | `"UTC"` | Timezone for timestamps and scheduling |
+| `timezone` | `"Asia/Taipei"` | Timezone for timestamps and scheduling |
 
 Available options in the web UI: UTC, Asia/Taipei, Asia/Tokyo, America/New_York, America/Los_Angeles, Europe/London. The backend uses Python's `zoneinfo` module, so any valid IANA timezone name works if set via API.
 
@@ -153,16 +171,17 @@ Defined in `src/backend/config.py` as `DEFAULT_SETTINGS`:
 DEFAULT_SETTINGS = {
     "gemini_api_key": "",
     "gemini_model": "gemini-3-flash-preview",
-    "system_prompt": "You are a helpful robot assistant...",
-    "timezone": "UTC",
+    "system_prompt": "...",  # Chinese inspection prompt
+    "timezone": "Asia/Taipei",
     "enable_video_recording": False,
-    "video_prompt": "Analyze this video...",
+    "video_prompt": "...",  # Chinese video analysis prompt
     "enable_idle_stream": True,
     "report_prompt": "...",  # Chinese inspection table template
-    "multiday_report_prompt": "Generate a comprehensive summary...",
+    "multiday_report_prompt": "...",  # Chinese multi-day inspection table template
     "telegram_message_prompt": "Based on the patrol inspection results below...",
     "enable_edge_ai": False,
     "edge_ai_rules": [],
+    "jetson_host": "",
     "enable_robot_camera_relay": False,
     "enable_external_rtsp": False,
     "external_rtsp_url": "",
@@ -187,6 +206,13 @@ Legacy per-robot files were stored in a shared `data/config/` directory. On firs
 ### Data Migration
 
 `database.backfill_robot_id()` sets `robot_id` on existing rows where it's NULL, ensuring pre-multi-robot data is attributed to the current robot.
+
+### Table and Key Renames
+
+The database migration system handles renames from previous versions:
+- Table `live_alerts` -> `edge_ai_alerts`
+- Setting key `enable_live_monitor` -> `enable_edge_ai`
+- Setting key `live_monitor_rules` -> `edge_ai_rules`
 
 ## Per-Robot Configuration Files
 
@@ -250,7 +276,8 @@ Log files are written to `LOG_DIR` with robot-ID prefixes:
 | `{robot_id}_patrol_service.log` | `patrol_service.py` | Patrol execution logs |
 | `{robot_id}_video_recorder.log` | `video_recorder.py` | Video recording logs |
 | `{robot_id}_edge_ai_service.log` | `edge_ai_service.py` | Live monitor alert logs, WebSocket status |
-| `{robot_id}_relay_manager.log` | `relay_manager.py` | ffmpeg relay process logs |
+| `{robot_id}_frame_hub.log` | `frame_hub.py` | Frame polling, ffmpeg RTSP push logs |
+| `{robot_id}_relay_manager.log` | `relay_manager.py` | Relay service HTTP client logs |
 
 All loggers use `TimezoneFormatter` which formats timestamps in the configured timezone. Flask/Werkzeug request logging is suppressed (set to ERROR level).
 

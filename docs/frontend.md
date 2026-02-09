@@ -23,7 +23,8 @@ src/frontend/
         ├── points.js            # Waypoint CRUD, table rendering
         ├── patrol.js            # Patrol start/stop, status polling
         ├── schedule.js          # Scheduled patrol management
-        ├── history.js           # Patrol history, detail modal, reports
+        ├── history.js           # Patrol history, detail modal, PDF export
+        ├── reports.js           # Multi-run report generation, list, PDF save
         ├── settings.js          # Settings load/save, clock, live monitor test
         ├── stats.js             # Token usage chart (Chart.js)
         ├── chart.min.js         # Chart.js (vendored, downloaded at build)
@@ -42,6 +43,7 @@ state.js  (imports nothing)
     |--- patrol.js  ---> ai.js
     |--- schedule.js
     |--- history.js ---> ai.js
+    |--- reports.js
     |--- settings.js
     |--- stats.js   (no state import, uses DOM directly)
     |
@@ -55,7 +57,7 @@ All cross-module state lives in a single exported `state` object:
 ```javascript
 const state = {
     robotPose: { x, y, theta },     // Current robot position
-    mapInfo: { resolution, width, height, origin_x, origin_y },
+    mapInfo: null,                   // { resolution, width, height, origin_x, origin_y }
     isMapLoaded: false,
     mapImage: new Image(),           // Loaded PNG map
     canvasScale: 1,                  // CSS scale factor for canvas
@@ -81,7 +83,7 @@ Also exports `escapeHtml()` utility for XSS prevention.
 
 ## Tab System
 
-The app has 5 tabs: **Patrol**, **Control** (default), **History**, **Stats**, **Settings**.
+The app has 6 tabs: **Patrol**, **Control** (default), **History**, **Reports**, **Tokens**, **Settings**.
 
 All tab views exist in the DOM simultaneously. `switchTab(name)` shows/hides them:
 
@@ -89,7 +91,7 @@ All tab views exist in the DOM simultaneously. `switchTab(name)` shows/hides the
 window.switchTab = function(tabName) {
     // Hide all views
     // Show target view
-    // Load data for data-heavy tabs (history, stats, settings)
+    // Load data for data-heavy tabs (history, reports, stats, settings)
     // Reparent map canvas between Control and Patrol views
 };
 ```
@@ -212,35 +214,73 @@ Renders three separate table views:
 
 ### `history.js` -- Patrol History
 
-- Lists all past patrol runs with status, timing, and token usage
+- Lists all past patrol runs as clickable cards with status, timing, and token usage
+- Card title format: "Run #N" with robot name tag
+- Video icon displayed for runs that have a video recording
 - Robot filter dropdown
 - Click to view detail modal with AI summary and inspection images
 - Live alerts section in detail modal (with stream source labels)
-- Generate multi-day analysis reports with date range picker
-- Download patrol PDFs and analysis report PDFs
+- Download patrol PDFs
 - Uses `marked.js` to render Markdown report content
+
+### `reports.js` -- Multi-Run Reports
+
+Separate from History -- dedicated to generating and managing multi-run analysis reports.
+
+- Date range picker (defaults to last 7 days)
+- Generate button that calls `POST /api/reports/generate` with start/end dates
+- Lists all previously generated reports as collapsible cards
+- Each card header shows date range, timestamp, and token usage (input/output/total)
+- Card body renders report Markdown content via `marked.js`
+- Save PDF button per report -- downloads via `/api/reports/generate/pdf?start_date=...&end_date=...`
 
 ### `settings.js` -- Settings Panel
 
-- Loads and saves all system settings via `/api/settings`
-- Displays registered robots list
+Loads and saves all system settings via `/api/settings`. Organized into 3 sub-tabs:
+
+**General:**
+- Timezone selector
+- Turbo mode checkbox (parallel inspection)
+- Enable idle stream checkbox (camera feed when not patrolling)
+- Enable Telegram notifications (bot token, user ID)
+- Telegram message prompt textarea
+- Registered robots list display
+
+**Gemini AI:**
+- API key input (with masking for saved keys)
+- Model selector
+- System prompt textarea
+- Report prompt textarea
+- Multi-day report prompt textarea
+- Enable video recording checkbox
+- Video analysis prompt textarea
+
+**VILA/Edge AI:**
+- Enable live monitoring checkbox
+- Stream source radio buttons (Robot Camera / External RTSP -- mutually exclusive, JPS supports max 1 stream)
+- Jetson Host IP input (auto-derives JPS, mediamtx, relay URLs)
+- External RTSP URL input
+- Alert rules textarea (one rule per line, max 10)
+- Test Edge AI button
+
+**Test Edge AI button:** Starts a test session using the full VILA JPS flow -- starts relay/push, registers stream with JPS, sets alert rules, connects WebSocket. Displays an alert rules table with per-rule trigger count and last-triggered timestamp. Shows VLC RTSP URL for stream preview. Polls `/api/{id}/test_edge_ai/status` every 2 seconds for status updates. Toggle button switches between "Test Edge AI" and "Stop Test".
+
+**Additional features:**
 - Manages the header clock (uses configured timezone)
-- Settings include: API key, model, timezone, prompts, feature toggles, Telegram config
-- **Live Monitor (VILA JPS) settings**:
-  - Stream source checkboxes: Robot Camera Relay, External RTSP
-  - External RTSP URL input field
-  - VILA JPS URL input field
-  - Alert rules textarea (max 10, one per line)
-  - Enable live monitoring checkbox
-- **Legacy / Test settings** (collapsible): VILA Server URL, VILA Model, VILA Alert URL, check interval
-- **Test Live Monitor button**: Runs a quick test using legacy chat completions approach (validates rules and VILA connection without starting a full patrol)
+- Sub-tab switching via `switchSettingsTab()` function
 
-### `stats.js` -- Token Usage Statistics
+### `stats.js` -- Tokens (Token Usage Statistics)
 
+- Tab labeled "Tokens" in the header navigation
 - Fetches daily token usage from `/api/stats/token_usage`
-- Renders a Chart.js line chart (input, output, total tokens)
-- Date range picker with robot filter
-- Summary cards showing totals for the selected period
+- Renders a Chart.js line chart with three datasets: Input Tokens, Output Tokens, Total Tokens
+- Y-axis displays values in millions (e.g., "0.50 M") with "Million Tokens" axis label
+- Date range picker with robot filter dropdown
+- Summary cards showing totals for the selected period:
+  - Input Tokens displayed in millions with pricing annotation ($0.50 / 1M)
+  - Output Tokens displayed in millions with pricing annotation ($3.00 / 1M)
+  - Total Tokens displayed in millions with estimated total cost
+- Tooltips show precise values in millions format (e.g., "0.123 M")
 
 ## Third-Party Libraries
 

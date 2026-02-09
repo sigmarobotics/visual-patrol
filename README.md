@@ -10,57 +10,81 @@ Autonomous multi-robot patrol system integrating **Kachaka Robot** with **Google
 
 ## Features
 
-- **Multi-Robot Support** - Single dashboard controls multiple robots via dropdown selector
-- **Autonomous Patrol** - Define waypoints per robot and let them navigate automatically
-- **AI-Powered Inspection** - Gemini Vision analyzes camera images at each waypoint
-- **Live Monitoring (VILA JPS)** - Continuous camera monitoring via RTSP relay + VILA JPS Alert API with WebSocket-based alert events
-- **Video Recording** - Record patrol footage with codec auto-detection (H.264 / XVID / MJPEG)
-- **RTSP Camera Relay** - Robot camera (gRPC) and external RTSP cameras relayed through mediamtx
-- **Real-time Dashboard** - Live map, robot position, battery, camera streams
-- **Scheduled Patrols** - Recurring patrol times with day-of-week filtering
-- **Multi-day Analysis Reports** - AI-powered aggregated reports across date ranges
-- **PDF Reports** - Server-side PDF generation with Markdown and CJK support
-- **Telegram Notifications** - Send patrol reports, PDFs, and live alert photos to Telegram
-- **Manual Control** - Web-based remote control with D-pad navigation
-- **History & Analytics** - Browse past patrols with token usage statistics and robot filtering
+- **Multi-Robot Support** -- Single dashboard controls multiple robots via dropdown selector
+- **Autonomous Patrol** -- Define waypoints per robot and let them navigate automatically
+- **AI-Powered Inspection** -- Gemini Vision analyzes camera images at each waypoint
+- **Live Monitoring (VILA JPS)** -- Continuous camera monitoring via RTSP relay + VILA JPS Alert API with WebSocket-based alert events
+- **Centralized Frame Hub** -- Single gRPC polling thread feeds an in-memory frame cache for all consumers (MJPEG, Gemini, video recorder, RTSP push)
+- **RTSP Camera Relay** -- Robot camera (gRPC via frame_hub) and external RTSP cameras relayed through Jetson relay service + mediamtx
+- **Video Recording** -- Record patrol footage with codec auto-detection (H.264 / XVID / MJPEG)
+- **Real-time Dashboard** -- Live map, robot position, battery, camera streams across 6 tabs
+- **Scheduled Patrols** -- Recurring patrol times with day-of-week filtering
+- **Multi-run Analysis Reports** -- AI-powered aggregated reports across date ranges with dedicated Reports tab
+- **PDF Reports** -- Server-side PDF generation with Markdown and CJK support
+- **Telegram Notifications** -- Send patrol reports, PDFs, and live alert photos to Telegram
+- **Manual Control** -- Web-based remote control with D-pad navigation
+- **History & Token Analytics** -- Browse past patrols with token usage statistics, pricing estimates, and robot filtering
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Browser (http://localhost:5000)                             │
-│  ├── Robot selector dropdown                                 │
-│  ├── /api/{robot-id}/state  → robot-specific calls           │
-│  └── /api/settings          → global calls                   │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────────────────┐
-│  nginx (port 5000)                                           │
-│  ├── /              → index.html (static)                    │
-│  ├── /static/       → CSS / JS assets                        │
-│  ├── /api/{robot-id}/...  → proxy to backend                 │
-│  └── /api/...       → proxy to robot-a (global)              │
-├─────────────────────────────────────────────────────────────┤
-│  robot-a (Flask:5000)  ←→  Kachaka Robot A                   │
-│  robot-b (Flask:5000)  ←→  Kachaka Robot B                   │
-│  robot-c (Flask:5000)  ←→  Kachaka Robot C                   │
-│  (all share ./data volume with SQLite WAL)                   │
-├─────────────────────────────────────────────────────────────┤
-│  mediamtx (external, deployed with VILA JPS stack)           │
-│  ├── /{robot-id}/camera   ← ffmpeg (gRPC JPEG → H.264)      │
-│  └── /{robot-id}/external ← ffmpeg (RTSP copy)              │
-│                                                              │
-│  VILA JPS (external)                                         │
-│  ├── POST /api/v1/live-stream  (register RTSP streams)       │
-│  ├── POST /api/v1/alerts       (set alert rules)             │
-│  └── WS :5016/api/v1/alerts/ws (receive alert events)        │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|  Browser (http://localhost:5000)                             |
+|  +-- Robot selector dropdown                                 |
+|  +-- 6 tabs: Patrol, Control, History, Reports, Tokens,     |
+|  |           Settings                                        |
+|  +-- /api/{robot-id}/state  -> robot-specific calls          |
+|  +-- /api/settings          -> global calls                  |
++---------------------------+---------------------------------+
+                            |
++---------------------------v---------------------------------+
+|  nginx (port 5000)                                           |
+|  +-- /              -> index.html (static)                   |
+|  +-- /static/       -> CSS / JS assets                       |
+|  +-- /api/{robot-id}/...  -> proxy to backend                |
+|  +-- /api/...       -> proxy to robot-a (global)             |
++-------------------------------------------------------------+
+|  robot-a (Flask:5000)  <-> Kachaka Robot A                   |
+|  robot-b (Flask:5000)  <-> Kachaka Robot B                   |
+|  (all share ./data volume with SQLite WAL)                   |
+|                                                              |
+|  Each backend runs:                                          |
+|    frame_hub  -- gRPC poll -> frame cache -> ffmpeg RTSP push|
+|    relay_manager -- HTTP client to Jetson relay service      |
++-------------------------------------------------------------+
+                            |
++---------------------------v---------------------------------+
+|  Jetson Host                                                 |
+|  +-- relay_service.py (port 5020)                            |
+|  |   +-- Robot camera: raw RTSP in -> ffmpeg transcode ->    |
+|  |   |   mediamtx /{robot-id}/camera                         |
+|  |   +-- External RTSP: source RTSP -> ffmpeg transcode ->   |
+|  |       mediamtx /{robot-id}/external                       |
+|  +-- mediamtx (port 8555) -- RTSP server                     |
+|  +-- VILA JPS (port 5010 API, port 5016 WS)                  |
+|      +-- Pulls RTSP streams from mediamtx                    |
+|      +-- POST /api/v1/live-stream  (register streams)        |
+|      +-- POST /api/v1/alerts       (set alert rules)         |
+|      +-- WS :5016/api/v1/alerts/ws (receive alert events)    |
++-------------------------------------------------------------+
+```
+
+**Robot camera unified pipeline:**
+```
+frame_hub gRPC poll -> frame cache -> ffmpeg push (0.5fps) -> mediamtx /raw/{robot-id}/camera
+  -> relay service transcode -> mediamtx /{robot-id}/camera -> VILA JPS
+```
+
+**External RTSP pipeline:**
+```
+External RTSP source -> relay service transcode -> mediamtx /{robot-id}/external -> VILA JPS
 ```
 
 - nginx regex `^/api/(robot-[^/]+)/(.*)$` strips the robot ID and proxies to the matching Docker service
 - Docker service names **must** match robot IDs (`robot-a`, `robot-b`, etc.)
-- Global endpoints (`/api/settings`, `/api/robots`, `/api/history`, `/api/stats`) proxy to any backend (shared DB)
-- mediamtx receives RTSP streams from ffmpeg relays; VILA JPS pulls from mediamtx for continuous analysis
+- Global endpoints (`/api/settings`, `/api/robots`, `/api/history`, `/api/stats`, `/api/reports`) proxy to any backend (shared DB)
+- `frame_hub` manages the gRPC polling lifecycle and on-demand ffmpeg RTSP push to Jetson mediamtx
+- The relay service on Jetson transcodes all streams to H264 Baseline for NvMMLite hardware decoder compatibility
 - Adding a robot = add a service to `docker-compose.yml` + restart
 
 ## Quick Start
@@ -71,9 +95,9 @@ docker compose up -d
 
 Open [http://localhost:5000](http://localhost:5000), go to **Settings** and configure:
 
-1. **Google Gemini API Key**
-2. **Timezone**
-3. **Live Monitor** (optional): Enable stream sources, set VILA JPS URL, and define alert rules
+1. **Google Gemini API Key** (Gemini AI tab)
+2. **Timezone** (General tab)
+3. **Live Monitor** (optional, VILA / Edge AI tab): Select stream source (robot camera or external RTSP), set Jetson Host IP, and define alert rules
 
 Robot IPs are set per-service in `docker-compose.yml` via the `ROBOT_IP` environment variable.
 
@@ -106,49 +130,55 @@ Add `robot-d` to the nginx `depends_on` list, then `docker compose up -d`.
 
 ```
 visual-patrol/
-├── nginx.conf                  # Dev reverse proxy config
-├── docker-compose.yml          # Dev: nginx + per-robot services (bridge network)
-├── Dockerfile                  # Backend image (Python 3.10, non-root user)
-├── .dockerignore
-├── src/
-│   ├── backend/
-│   │   ├── app.py              # Flask REST API
-│   │   ├── robot_service.py    # Kachaka gRPC interface
-│   │   ├── patrol_service.py   # Patrol orchestration
-│   │   ├── cloud_ai_service.py       # Gemini AI integration
-│   │   ├── edge_ai_service.py     # VILA JPS live monitoring (WebSocket alerts)
-│   │   ├── relay_manager.py    # ffmpeg RTSP relay process management
-│   │   ├── settings_service.py # Global settings (DB-backed)
-│   │   ├── pdf_service.py      # PDF report generation
-│   │   ├── database.py         # SQLite management
-│   │   ├── config.py           # Per-robot env config
-│   │   ├── video_recorder.py   # Video recording
-│   │   ├── utils.py            # Utilities
-│   │   ├── logger.py           # Timezone-aware logging
-│   │   └── requirements.txt
-│   └── frontend/
-│       ├── templates/
-│       │   └── index.html      # SPA (static, no Jinja2)
-│       └── static/
-│           ├── css/style.css
-│           └── js/
-│               ├── app.js      # Entry point, tab switching, robot selector
-│               ├── state.js    # Shared state hub
-│               ├── map.js      # Canvas map rendering
-│               ├── controls.js # Manual D-pad control
-│               ├── patrol.js   # Patrol start/stop, status polling
-│               ├── points.js   # Waypoint CRUD
-│               ├── schedule.js # Scheduled patrols
-│               ├── ai.js       # AI test panel
-│               ├── history.js  # Patrol history & reports
-│               ├── settings.js # Settings panel
-│               └── stats.js    # Token usage chart
-├── data/                       # Shared runtime data (SQLite DB, images)
-├── logs/                       # Per-robot application logs
-├── deploy/                     # Production config (host networking)
-│   ├── docker-compose.prod.yaml
-│   └── nginx.conf
-└── .github/workflows/          # CI/CD (multi-arch build → GHCR)
++-- nginx.conf                  # Dev reverse proxy config
++-- docker-compose.yml          # Dev: nginx + per-robot services (bridge network)
++-- Dockerfile                  # Backend image (Python 3.10, non-root user)
++-- .dockerignore
++-- src/
+|   +-- backend/
+|   |   +-- app.py              # Flask REST API (~1000 lines)
+|   |   +-- robot_service.py    # Kachaka gRPC interface
+|   |   +-- patrol_service.py   # Patrol orchestration
+|   |   +-- cloud_ai_service.py # Gemini AI integration
+|   |   +-- edge_ai_service.py  # VILA JPS live monitoring + test monitor
+|   |   +-- frame_hub.py        # Centralized gRPC poll -> frame cache -> RTSP push
+|   |   +-- relay_manager.py    # HTTP client for Jetson relay service
+|   |   +-- settings_service.py # Global settings (DB-backed)
+|   |   +-- pdf_service.py      # PDF report generation
+|   |   +-- database.py         # SQLite management + migrations
+|   |   +-- config.py           # Per-robot env config + defaults
+|   |   +-- video_recorder.py   # Video recording
+|   |   +-- utils.py            # Utilities
+|   |   +-- logger.py           # Timezone-aware logging
+|   |   +-- requirements.txt
+|   +-- frontend/
+|       +-- templates/
+|       |   +-- index.html      # SPA (static, no Jinja2)
+|       +-- static/
+|           +-- css/style.css
+|           +-- js/
+|               +-- app.js      # Entry point, tab switching, robot selector
+|               +-- state.js    # Shared state hub
+|               +-- map.js      # Canvas map rendering
+|               +-- controls.js # Manual D-pad control
+|               +-- patrol.js   # Patrol start/stop, status polling
+|               +-- points.js   # Waypoint CRUD
+|               +-- schedule.js # Scheduled patrols
+|               +-- ai.js       # AI test panel
+|               +-- history.js  # Patrol history browser
+|               +-- reports.js  # Multi-run report generation
+|               +-- settings.js # Settings panel (3 sub-tabs)
+|               +-- stats.js    # Token usage chart (millions + pricing)
++-- data/                       # Shared runtime data (SQLite DB, images)
++-- logs/                       # Per-robot application logs
++-- deploy/                     # Production config (host networking)
+|   +-- docker-compose.prod.yaml
+|   +-- nginx.conf
+|   +-- relay-service/          # Jetson-side ffmpeg relay service
+|   |   +-- Dockerfile
+|   +-- vila-jps/               # VILA JPS patches
+|       +-- streaming_patched.py
++-- .github/workflows/          # CI/CD (multi-arch build -> GHCR)
 ```
 
 ## API Reference
@@ -167,7 +197,7 @@ visual-patrol/
 | `/api/{id}/manual_control` | POST | D-pad control `{action}` |
 | `/api/{id}/return_home` | POST | Return to charging station |
 | `/api/{id}/cancel_command` | POST | Cancel current movement |
-| `/api/{id}/camera/front` | GET | Front camera MJPEG stream |
+| `/api/{id}/camera/front` | GET | Front camera MJPEG stream (from frame_hub cache) |
 | `/api/{id}/camera/back` | GET | Back camera MJPEG stream |
 
 ### Patrol Management (robot-specific)
@@ -191,6 +221,13 @@ visual-patrol/
 | `/api/{id}/points/from_robot` | GET | Import saved locations from robot |
 | `/api/{id}/test_ai` | POST | Test AI on current camera frame |
 
+### Edge AI Test (robot-specific)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/{id}/test_edge_ai/start` | POST | Start edge AI test (relay -> JPS -> WS) |
+| `/api/{id}/test_edge_ai/stop` | POST | Stop edge AI test |
+| `/api/{id}/test_edge_ai/status` | GET | Edge AI test status + alerts |
+
 ### Infrastructure (global)
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -206,36 +243,60 @@ visual-patrol/
 | `/api/history` | GET | Patrol history (`?robot_id=` filter) |
 | `/api/history/{run_id}` | GET | Patrol run detail with inspections |
 | `/api/report/{run_id}/pdf` | GET | Download single patrol PDF |
-| `/api/reports/generate` | POST | Generate multi-day analysis report |
-| `/api/reports/generate/pdf` | GET | Download multi-day analysis PDF |
+| `/api/reports` | GET | List generated multi-run reports |
+| `/api/reports/generate` | POST | Generate multi-run analysis report |
+| `/api/reports/generate/pdf` | GET | Download multi-run analysis PDF |
 | `/api/stats/token_usage` | GET | Token usage by date (`?robot_id=` filter) |
 
 ## Configuration
 
-Settings are stored in a shared SQLite database (`data/report/report.db`, table `global_settings`) and managed through the web UI Settings page.
+Settings are stored in a shared SQLite database (`data/report/report.db`, table `global_settings`) and managed through the web UI Settings page, which has three sub-tabs: **General**, **Gemini AI**, and **VILA / Edge AI**.
 
+### General Tab
 | Setting | Description |
 |---------|-------------|
-| `gemini_api_key` | Google Gemini API key |
-| `gemini_model` | AI model name (e.g. `gemini-2.0-flash`) |
 | `timezone` | Display timezone (e.g. `Asia/Taipei`) |
-| `system_prompt` | AI system role prompt |
-| `report_prompt` | Single patrol report generation prompt |
-| `multiday_report_prompt` | Multi-day aggregated report prompt |
 | `turbo_mode` | Async AI analysis (robot moves while images process) |
-| `enable_video_recording` | Record patrol video |
-| `video_prompt` | Video analysis prompt |
 | `enable_idle_stream` | Camera stream when not patrolling |
 | `enable_telegram` | Telegram notifications on patrol completion |
 | `telegram_bot_token` / `telegram_user_id` | Telegram config |
-| `jetson_host` | Jetson device IP address (auto-derives JPS, mediamtx, relay URLs) |
-| `enable_robot_camera_relay` | Relay robot camera to mediamtx via ffmpeg |
-| `enable_external_rtsp` | Relay external RTSP camera to mediamtx |
-| `external_rtsp_url` | External RTSP camera source URL |
-| `enable_edge_ai` | Enable VILA JPS live monitoring during patrol |
-| `edge_ai_rules` | List of yes/no alert rules for live monitoring |
 
-Per-robot settings (`ROBOT_ID`, `ROBOT_NAME`, `ROBOT_IP`, `MEDIAMTX_*`) are set via environment variables in `docker-compose.yml`.
+### Gemini AI Tab
+| Setting | Description |
+|---------|-------------|
+| `gemini_api_key` | Google Gemini API key |
+| `gemini_model` | AI model name (e.g. `gemini-3-flash-preview`) |
+| `system_prompt` | AI system role prompt |
+| `report_prompt` | Single patrol report generation prompt |
+| `telegram_message_prompt` | Prompt for Telegram notification messages |
+| `multiday_report_prompt` | Multi-day aggregated report prompt |
+| `enable_video_recording` | Record patrol video |
+| `video_prompt` | Video analysis prompt |
+
+### VILA / Edge AI Tab
+| Setting | Description |
+|---------|-------------|
+| `enable_edge_ai` | Enable VILA JPS live monitoring during patrol |
+| Stream source (radio) | Robot Camera Relay OR External RTSP (max 1 stream, mutually exclusive) |
+| `jetson_host` | Jetson device IP (auto-derives JPS port 5010, mediamtx port 8555, relay port 5020, WS port 5016) |
+| `external_rtsp_url` | External RTSP camera source URL |
+| `edge_ai_rules` | List of yes/no alert rules for live monitoring (max 10) |
+
+### Environment Variables (per-robot, in docker-compose.yml)
+| Variable | Description |
+|----------|-------------|
+| `ROBOT_ID` | Robot identifier (must match Docker service name) |
+| `ROBOT_NAME` | Display name |
+| `ROBOT_IP` | Kachaka robot IP:port |
+| `RELAY_SERVICE_URL` | Jetson relay service URL (e.g. `http://192.168.50.35:5020`); empty = relay unavailable |
+| `DATA_DIR` | Shared data directory |
+| `LOG_DIR` | Log output directory |
+
+### Derived Constants (config.py)
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `JETSON_JPS_API_PORT` | 5010 | VILA JPS API port |
+| `JETSON_MEDIAMTX_PORT` | 8555 | mediamtx RTSP port |
 
 ## Deployment
 
@@ -268,12 +329,15 @@ python src/backend/app.py
 |---------|----------|
 | Robot shows "offline" | Check `ROBOT_IP` in docker-compose.yml; ensure robot is on same network |
 | Robot dropdown empty | Verify backends are running: `docker compose ps` |
-| AI analysis failed | Verify Gemini API key in Settings; check `logs/{robot-id}_cloud_ai_service.log` |
+| AI analysis failed | Verify Gemini API key in Settings > Gemini AI; check `logs/{robot-id}_cloud_ai_service.log` |
 | PDF generation failed | Check `logs/{robot-id}_app.log` |
-| Camera stream not loading | Enable "Continuous Camera Stream" in Settings; check robot connection |
+| Camera stream not loading | Enable "Continuous Camera Stream" in Settings > General; check robot connection |
 | Map not loading | Robot may still be connecting; check container logs for gRPC errors |
-| mediamtx not reachable | Ensure mediamtx is running (deployed with VILA JPS stack); check `MEDIAMTX_*` env vars |
-| Live monitor not triggering | Verify VILA JPS is running, streams are registered (`/api/relay/status`), and `jetson_host` is set |
+| Relay service not reachable | Ensure `RELAY_SERVICE_URL` is set in docker-compose.yml; verify relay service is running on Jetson |
+| Live monitor not starting | Verify `jetson_host` is set in Settings > VILA / Edge AI; check that relay service + mediamtx + VILA JPS are running on Jetson |
+| Live monitor no alerts | Check `/api/relay/status` for stream status; verify alert rules are configured; check `logs/{robot-id}_edge_ai_service.log` |
+| RTSP push to mediamtx fails | Check `logs/{robot-id}_frame_hub.log`; ensure mediamtx is running on Jetson at port 8555 |
+| Edge AI test fails | Ensure stream source is selected (radio button); check Jetson Host IP and that relay service is accessible |
 
 ## Documentation
 
