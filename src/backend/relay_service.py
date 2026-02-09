@@ -180,7 +180,7 @@ class RelayServiceManager:
             cmd = [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "tcp",
-                "-stimeout", "10000000",
+                "-timeout", "10000000",
                 "-i", source_url,
                 "-an",
                 "-vf", vf,
@@ -194,7 +194,7 @@ class RelayServiceManager:
             cmd = [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "tcp",
-                "-stimeout", "10000000",
+                "-timeout", "10000000",
                 "-i", source_url,
                 "-an",
                 "-vf", vf,
