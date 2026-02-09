@@ -65,11 +65,10 @@ environment:
 
 | 設定 | 預設值 | 說明 |
 |------|--------|------|
-| `enable_live_monitor` | `false` | 巡檢期間啟用透過 VILA Alert API 的背景鏡頭監控 |
-| `live_monitor_interval` | `5` | 即時監控檢查間隔（秒） |
-| `live_monitor_rules` | `[]` | 是/否警報規則字串列表（例：`["Is there a person lying on the floor?", "Is there smoke or fire?"]`） |
+| `enable_edge_ai` | `false` | 巡檢期間啟用透過 VILA JPS 串流的背景監控 |
+| `edge_ai_rules` | `[]` | 警報規則字串列表（例：`["Is there a person lying on the floor?", "Is there smoke or fire?"]`） |
 
-即時監控需要設定 `vila_alert_url`（在 AI 設定中）。啟用後，監控以 daemon 執行緒在巡檢期間運行，擷取鏡頭畫面並對每張影像評估各條規則。觸發的警報會連同證據圖片儲存，並包含在巡檢報告中。
+即時監控使用 VILA JPS 串流架構（relay → mediamtx → JPS → WebSocket 警報）。啟用後，系統會自動啟動 relay、向 JPS 註冊串流並設定警報規則。觸發的警報會連同證據圖片儲存，並包含在巡檢報告中。
 
 每條規則有 60 秒冷卻時間，避免同一狀況重複觸發警報。
 
@@ -136,9 +135,8 @@ DEFAULT_SETTINGS = {
     "report_prompt": "...",  # 中文巡檢表範本
     "multiday_report_prompt": "Generate a comprehensive summary...",
     "telegram_message_prompt": "Based on the patrol inspection results below...",
-    "enable_live_monitor": False,
-    "live_monitor_interval": 5,
-    "live_monitor_rules": [],
+    "enable_edge_ai": False,
+    "edge_ai_rules": [],
 }
 ```
 
@@ -219,10 +217,10 @@ DEFAULT_SETTINGS = {
 | 日誌檔 | 來源 | 內容 |
 |--------|------|------|
 | `{robot_id}_app.log` | `app.py` | Flask 應用程式日誌 |
-| `{robot_id}_ai_service.log` | `ai_service.py` | AI 推論日誌、token 使用量 |
+| `{robot_id}_cloud_ai_service.log` | `cloud_ai_service.py` | AI 推論日誌、token 使用量 |
 | `{robot_id}_patrol_service.log` | `patrol_service.py` | 巡檢執行日誌 |
 | `{robot_id}_video_recorder.log` | `video_recorder.py` | 錄影日誌 |
-| `{robot_id}_live_monitor.log` | `live_monitor.py` | 即時監控警報日誌 |
+| `{robot_id}_edge_ai_service.log` | `edge_ai_service.py` | 即時監控警報日誌 |
 
 所有日誌器使用 `TimezoneFormatter`，以設定的時區格式化時間戳記。Flask/Werkzeug 請求日誌被抑制 (設為 ERROR 層級)。
 

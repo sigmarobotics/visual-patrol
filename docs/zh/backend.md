@@ -14,9 +14,9 @@ src/backend/
 ├── settings_service.py  # 全域設定 CRUD (包裝 DB 資料表)
 ├── robot_service.py     # Kachaka 機器人 gRPC 介面
 ├── patrol_service.py    # 巡檢調度、排程
-├── ai_service.py        # Google Gemini AI 整合
+├── cloud_ai_service.py        # Google Gemini AI 整合
 ├── pdf_service.py       # PDF 報告生成 (ReportLab)
-├── live_monitor.py      # 巡檢期間透過 VILA Alert API 的背景鏡頭監控
+├── edge_ai_service.py      # 巡檢期間透過 VILA Alert API 的背景鏡頭監控
 ├── video_recorder.py    # 巡檢錄影 (OpenCV)
 ├── utils.py             # JSON I/O、時區輔助函式
 ├── logger.py            # 時區感知的日誌設定
@@ -35,9 +35,9 @@ database.py         -- Schema 初始化 (在服務匯入前呼叫 init_db)
 settings_service.py -- 讀取 global_settings 資料表
     |
 robot_service.py    -- 連線至 Kachaka (從環境變數讀取 ROBOT_IP)
-ai_service.py       -- 設定 Gemini 客戶端 (從設定讀取 API 金鑰)
+cloud_ai_service.py       -- 設定 Gemini 客戶端 (從設定讀取 API 金鑰)
 patrol_service.py   -- 匯入 robot_service、ai_service、settings_service
-live_monitor.py     -- 由 patrol_service 使用 (延遲匯入)
+edge_ai_service.py     -- 由 patrol_service 使用 (延遲匯入)
 pdf_service.py      -- 從資料庫讀取報告資料
 video_recorder.py   -- 由 patrol_service 使用
 utils.py            -- 由 patrol_service、app.py 使用
@@ -78,7 +78,7 @@ logger.py           -- 由 ai_service、patrol_service、video_recorder 使用
 
 | 路徑 | 值 | 說明 |
 |------|------|------|
-| `live_alerts` 目錄 | `{ROBOT_DATA_DIR}/report/live_alerts` | 即時監控證據圖片（執行時建立） |
+| `edge_ai_alerts` 目錄 | `{ROBOT_DATA_DIR}/report/edge_ai_alerts` | 即時監控證據圖片（執行時建立） |
 
 同時定義 `DEFAULT_SETTINGS` 字典，包含所有全域設定的預設值，以及 `ensure_dirs()` / `migrate_legacy_files()` 函式。
 
@@ -165,7 +165,7 @@ with db_context() as (conn, cursor):
 | `last_seen` | TEXT | 最後心跳時間 |
 | `status` | TEXT | `online` 或 `offline` |
 
-**`live_alerts`** -- 巡檢期間觸發的即時監控警報
+**`edge_ai_alerts`** -- 巡檢期間觸發的即時監控警報
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
@@ -225,7 +225,7 @@ with db_context() as (conn, cursor):
 
 **自動重連：** 輪詢迴圈在持續錯誤時重設 `self.client = None`，觸發下一輪輪詢週期時重新連線。
 
-### `ai_service.py`
+### `cloud_ai_service.py`
 
 AI 整合，用於視覺巡檢和報告生成。使用 Google Gemini 作為 VLM 供應商。
 
@@ -266,7 +266,7 @@ class InspectionResult(BaseModel):
 2. 驗證 AI 已設定
 3. 建立 `patrol_runs` 資料庫記錄
 4. 選擇性啟動錄影
-5. 選擇性啟動即時監控（若 `enable_live_monitor` 已啟用且 `vila_alert_url` 已設定）
+5. 選擇性啟動即時監控（若 `enable_edge_ai` 已啟用且 `jetson_host` 已設定）
 6. 對每個巡檢點位：
    a. 移動機器人至該點 (`_move_to_point`)
    b. 等待 2 秒穩定
@@ -289,11 +289,11 @@ class InspectionResult(BaseModel):
 
 **圖片命名：** 擷取時圖片儲存為 `{point_name}_processing_{uuid}.jpg`，AI 分析完成後重新命名為 `{point_name}_{OK|NG}_{uuid}.jpg`。
 
-### `live_monitor.py`
+### `edge_ai_service.py`
 
 巡檢期間透過 VILA 的背景鏡頭監控，以及設定頁面的測試監控器。
 
-**單例：** `live_monitor = LiveMonitor()`、`test_live_monitor = TestLiveMonitor()`
+**單例：** `edge_ai_monitor = LiveMonitor()`、`test_edge_ai = TestLiveMonitor()`
 
 #### VILA API 整合
 
@@ -334,7 +334,7 @@ VILA 3B (量化版) 以 `0`/`1` 回答而非 `yes`/`no`：
 
 **巡檢期間生命週期：**
 
-1. 在建立巡檢記錄後啟動（若 `enable_live_monitor` 已啟用且 `vila_alert_url` 已設定）
+1. 在建立巡檢記錄後啟動（若 `enable_edge_ai` 已啟用且 `jetson_host` 已設定）
 2. 在每個巡檢點位檢查前暫停 (`pause()`)
 3. 在每個巡檢點位檢查後恢復 (`resume()`)
 4. 在巡檢迴圈結束後的 `finally` 區塊中停止
@@ -342,10 +342,10 @@ VILA 3B (量化版) 以 `0`/`1` 回答而非 `yes`/`no`：
 
 **警報處理：**
 
-- 每次檢查擷取鏡頭畫面、base64 編碼，並對每條規則呼叫 `POST {vila_alert_url}/v1/chat/completions`
+- 透過 VILA JPS WebSocket 接收串流分析的警報事件
 - 每條規則有 60 秒冷卻時間，避免同一規則重複觸發警報
-- 證據圖片儲存至 `data/{robot_id}/report/live_alerts/`
-- 警報記錄至 `live_alerts` 資料庫資料表
+- 證據圖片儲存至 `data/{robot_id}/report/edge_ai_alerts/`
+- 警報記錄至 `edge_ai_alerts` 資料庫資料表
 
 #### `TestLiveMonitor`
 

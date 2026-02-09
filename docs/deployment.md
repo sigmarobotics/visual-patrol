@@ -331,7 +331,7 @@ docker compose -f docker-compose.prod.yaml ps
 curl http://localhost:5000/api/relay/status
 
 # Check VILA JPS health
-curl http://localhost:5000/api/vila/health
+curl http://localhost:5000/api/edge_ai/health
 ```
 
 ## Docker Image
@@ -376,16 +376,16 @@ docker build -t visual-patrol .
 │   │   │   └── patrol_schedule.json
 │   │   └── report/
 │   │       ├── images/        # Inspection photos
-│   │       ├── live_alerts/   # Live monitor evidence images
+│   │       ├── edge_ai_alerts/   # Live monitor evidence images
 │   │       └── video/         # Patrol videos (if enabled)
 │   └── robot-b/
 │       └── ...
 └── logs/                      # Application logs (auto-created)
     ├── robot-a_app.log
-    ├── robot-a_ai_service.log
+    ├── robot-a_cloud_ai_service.log
     ├── robot-a_patrol_service.log
     ├── robot-a_video_recorder.log
-    ├── robot-a_live_monitor.log
+    ├── robot-a_edge_ai_service.log
     └── robot-a_relay_manager.log
 ```
 
@@ -422,13 +422,13 @@ healthcheck:
 |---------|----------|
 | Robot shows "offline" | Check `ROBOT_IP` in compose file; verify robot is reachable on the network |
 | Robot dropdown empty | Verify backends are running: `docker compose ps` |
-| AI analysis failed | Check Gemini API key in Settings; review `logs/{robot-id}_ai_service.log` |
+| AI analysis failed | Check Gemini API key in Settings; review `logs/{robot-id}_cloud_ai_service.log` |
 | PDF generation failed | Check `logs/{robot-id}_app.log` for errors |
 | Camera stream not loading | Enable "Continuous Camera Stream" in Settings; verify robot connection |
 | Map not loading | Robot may still be connecting; check container logs for gRPC errors |
 | Port conflict (prod) | Ensure each robot has a unique `PORT` value |
 | mediamtx port conflict | Change `MTX_RTSPADDRESS` and update `MEDIAMTX_*` env vars to match |
-| Live monitor not working | Check `logs/{robot-id}_live_monitor.log`; verify VILA JPS is running (`/api/vila/health`) |
+| Live monitor not working | Check `logs/{robot-id}_edge_ai_service.log`; verify VILA JPS is running (`/api/edge_ai/health`) |
 | ffmpeg relay crashing | Check `logs/{robot-id}_relay_manager.log`; verify mediamtx is running |
 | Relay service unreachable | Check `RELAY_SERVICE_URL` env var; verify relay service is running: `curl http://localhost:5020/health`; VP falls back to local ffmpeg automatically |
 | NVENC encoder not working | Check `USE_NVENC` env var; verify `--runtime=nvidia`; check relay service logs for encoder errors; set `USE_NVENC=false` to fallback to libx264 |

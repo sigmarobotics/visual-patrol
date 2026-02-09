@@ -341,7 +341,7 @@ docker build -t visual-patrol .
 │       └── ...
 └── logs/                      # 應用程式日誌 (自動建立)
     ├── robot-a_app.log
-    ├── robot-a_ai_service.log
+    ├── robot-a_cloud_ai_service.log
     ├── robot-a_patrol_service.log
     └── robot-a_video_recorder.log
 ```
@@ -377,7 +377,7 @@ healthcheck:
 |------|----------|
 | 機器人顯示「離線」 | 檢查 compose 檔中的 `ROBOT_IP`；確認機器人在網路上可連線 |
 | 機器人下拉選單空白 | 確認後端正在執行：`docker compose ps` |
-| AI 分析失敗 | 檢查設定中的 Gemini API 金鑰；查看 `logs/{robot-id}_ai_service.log` |
+| AI 分析失敗 | 檢查設定中的 Gemini API 金鑰；查看 `logs/{robot-id}_cloud_ai_service.log` |
 | PDF 生成失敗 | 檢查 `logs/{robot-id}_app.log` 的錯誤訊息 |
 | 鏡頭串流無法載入 | 在設定中啟用「Continuous Camera Stream」；確認機器人連線 |
 | 地圖無法載入 | 機器人可能還在連線中；檢查容器日誌的 gRPC 錯誤 |

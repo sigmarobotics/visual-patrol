@@ -16,14 +16,14 @@ Reference for debugging the live monitoring pipeline on the Jetson deployment ma
 │       ├── config/            # points.json, patrol_schedule.json
 │       └── report/
 │           ├── images/        # Patrol inspection photos
-│           ├── live_alerts/   # Live monitor evidence images
+│           ├── edge_ai_alerts/   # Live monitor evidence images
 │           └── video/         # Patrol videos
 └── logs/
     ├── robot-a_app.log
     ├── robot-a_patrol_service.log
-    ├── robot-a_live_monitor.log    # <-- VILA JPS alerts, WebSocket events
+    ├── robot-a_edge_ai_service.log    # <-- VILA JPS alerts, WebSocket events
     ├── robot-a_relay_manager.log   # <-- ffmpeg relay process status
-    ├── robot-a_ai_service.log
+    ├── robot-a_cloud_ai_service.log
     └── robot-a_video_recorder.log
 ```
 
@@ -51,10 +51,10 @@ All source files are in the visual-patrol repo at `src/backend/`:
 | File | Purpose | Key Details |
 |------|---------|-------------|
 | `src/backend/relay_manager.py` | ffmpeg subprocess management | `RelayManager` singleton; robot camera relay (gRPC→H.264→RTSP) and external RTSP relay (copy codec); auto-restart with exponential backoff (max 3 retries, 10s monitor interval) |
-| `src/backend/live_monitor.py` | VILA JPS lifecycle | `LiveMonitor` class: stream register → alert rules → WebSocket → deregister; `_cleanup_stale_streams()` on start; 60s alert cooldown; evidence capture + DB save + Telegram |
+| `src/backend/edge_ai_service.py` | VILA JPS lifecycle | `LiveMonitor` class: stream register → alert rules → WebSocket → deregister; `_cleanup_stale_streams()` on start; 60s alert cooldown; evidence capture + DB save + Telegram |
 | `src/backend/patrol_service.py` | Patrol orchestration | Lines ~348-455: starts relay → sleeps 3s → starts live_monitor; `finally` block stops live_monitor then relay_manager |
 | `src/backend/config.py` | Environment config | `MEDIAMTX_INTERNAL` (ffmpeg push target), `MEDIAMTX_EXTERNAL` (VILA pull source), both default `localhost:8554` |
-| `src/backend/app.py` | Flask API endpoints | `/api/relay/status`, `/api/relay/test`, `/api/vila/health` |
+| `src/backend/app.py` | Flask API endpoints | `/api/relay/status`, `/api/relay/test`, `/api/edge_ai/health` |
 
 ## Data Flow
 
@@ -74,10 +74,10 @@ VILA JPS (port 5010)
   → Analyzes video frames against alert rules
   → Sends alert events via WebSocket (port 5016)
 
-live_monitor.py
+edge_ai_service.py
   ← Receives WS alert events
   → Captures evidence frame (gRPC for robot cam, cv2 for external)
-  → Saves to DB (live_alerts table) + disk (data/{robot-id}/report/live_alerts/)
+  → Saves to DB (edge_ai_alerts table) + disk (data/{robot-id}/report/edge_ai_alerts/)
   → Sends photo to Telegram (if configured)
 ```
 
@@ -94,7 +94,7 @@ docker compose -f /code/visual-patrol/deploy/docker-compose.prod.yaml ps
 curl -s http://localhost:5000/api/relay/status | python3 -m json.tool
 
 # Check VILA JPS connectivity (from visual-patrol's perspective)
-curl -s http://localhost:5000/api/vila/health | python3 -m json.tool
+curl -s http://localhost:5000/api/edge_ai/health | python3 -m json.tool
 
 # --- mediamtx ---
 # Is mediamtx container running?
@@ -123,7 +123,7 @@ All logs are at `/code/visual-patrol/deploy/logs/`:
 
 ```bash
 # Live monitor (VILA JPS alerts, WebSocket connection)
-tail -f /code/visual-patrol/deploy/logs/robot-a_live_monitor.log
+tail -f /code/visual-patrol/deploy/logs/robot-a_edge_ai_service.log
 
 # Relay manager (ffmpeg processes start/stop/crash)
 tail -f /code/visual-patrol/deploy/logs/robot-a_relay_manager.log
@@ -142,7 +142,7 @@ tail -f /code/visual-patrol/deploy/logs/robot-a_{live_monitor,relay_manager,patr
 
 ### "Stream Maximum reached" from VILA JPS
 
-**Symptom**: `live_monitor.log` shows 422 error when registering stream.
+**Symptom**: `edge_ai_service.log` shows 422 error when registering stream.
 
 **Cause**: VILA JPS allows max 1 stream. A previous patrol crashed without deregistering.
 
@@ -178,7 +178,7 @@ docker exec visual_patrol_robot_a env | grep MEDIAMTX
 
 ### WebSocket never connects
 
-**Symptom**: `live_monitor.log` shows "VILA WS error (attempt N/10)" repeatedly.
+**Symptom**: `edge_ai_service.log` shows "VILA WS error (attempt N/10)" repeatedly.
 
 **Cause**: VILA JPS WebSocket port 5016 not reachable.
 
@@ -196,7 +196,7 @@ docker logs <vila-jps-container-name> --tail 50
 
 ### Alerts trigger but no evidence image saved
 
-**Symptom**: `live_alerts` table has entries with empty `image_path`.
+**Symptom**: `edge_ai_alerts` table has entries with empty `image_path`.
 
 **Cause**: Evidence capture failed. For robot camera: gRPC connection lost. For external: RTSP URL unreachable via cv2.
 
@@ -215,14 +215,14 @@ ffprobe -rtsp_transport tcp rtsp://localhost:8555/robot-a/external 2>&1 | head -
 **Symptom**: `patrol_service.log` shows patrol running but no relay/monitor entries.
 
 **Cause**: Settings not configured. All of these must be set:
-1. `enable_live_monitor` = true
-2. `vila_jps_url` is set (e.g. `http://localhost:5010`)
+1. `enable_edge_ai` = true
+2. `jetson_host` is set (e.g. `192.168.50.35`)
 3. At least one stream source enabled (`enable_robot_camera_relay` or `enable_external_rtsp`)
-4. At least one rule in `live_monitor_rules`
+4. At least one rule in `edge_ai_rules`
 
 **Check**:
 ```bash
-curl -s http://localhost:5000/api/settings | python3 -m json.tool | grep -E '(enable_live|vila_jps|enable_robot|enable_external|live_monitor_rules)'
+curl -s http://localhost:5000/api/settings | python3 -m json.tool | grep -E '(enable_edge_ai|jetson_host|enable_robot|enable_external|edge_ai_rules)'
 ```
 
 ## Environment Variables (on robot services)

@@ -285,7 +285,7 @@ def init_db():
     ''')
 
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS live_alerts (
+        CREATE TABLE IF NOT EXISTS edge_ai_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id INTEGER,
             rule TEXT,
@@ -319,7 +319,7 @@ def _run_migrations(cursor):
         ('robot_id', 'patrol_runs', ['robot_id TEXT']),
         ('robot_id', 'inspection_results', ['robot_id TEXT']),
         ('robot_id', 'generated_reports', ['robot_id TEXT']),
-        ('stream_source', 'live_alerts', ['stream_source TEXT']),
+        ('stream_source', 'edge_ai_alerts', ['stream_source TEXT']),
     ]
 
     for check_col, table, columns in migrations:
@@ -338,6 +338,9 @@ def _run_migrations(cursor):
 
     # Add per-category token columns to patrol_runs
     _add_category_token_columns(cursor)
+
+    # Rename live_alerts → edge_ai_alerts and settings keys
+    _rename_live_to_edge_ai(cursor)
 
 
 def _rename_token_columns(cursor):
@@ -391,3 +394,31 @@ def _add_category_token_columns(cursor):
                 print(f"Migrating: Added patrol_runs.{col_name}")
             except Exception as e:
                 print(f"  Migration warning: {e}")
+
+
+def _rename_live_to_edge_ai(cursor):
+    """Rename live_alerts table to edge_ai_alerts and migrate settings keys."""
+    # Rename table (idempotent: check if old table exists)
+    try:
+        cursor.execute("SELECT 1 FROM live_alerts LIMIT 1")
+        # Old table exists — rename it
+        cursor.execute("ALTER TABLE live_alerts RENAME TO edge_ai_alerts")
+        print("Migrating: Renamed table live_alerts → edge_ai_alerts")
+    except sqlite3.OperationalError:
+        pass  # Old table doesn't exist (already renamed or fresh DB)
+
+    # Rename settings keys in global_settings
+    renames = [
+        ('enable_live_monitor', 'enable_edge_ai'),
+        ('live_monitor_rules', 'edge_ai_rules'),
+    ]
+    for old_key, new_key in renames:
+        try:
+            cursor.execute(
+                "UPDATE global_settings SET key = ? WHERE key = ?",
+                (new_key, old_key)
+            )
+            if cursor.rowcount > 0:
+                print(f"Migrating: Renamed setting {old_key} → {new_key}")
+        except Exception as e:
+            print(f"  Migration warning (rename setting {old_key}): {e}")

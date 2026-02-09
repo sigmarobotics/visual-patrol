@@ -14,8 +14,8 @@ src/backend/
 ├── settings_service.py  # Global settings CRUD (wraps DB table)
 ├── robot_service.py     # Kachaka robot gRPC interface
 ├── patrol_service.py    # Patrol orchestration, scheduling
-├── ai_service.py        # Google Gemini AI integration
-├── live_monitor.py      # VILA JPS live monitoring (WebSocket alerts) + legacy test monitor
+├── cloud_ai_service.py        # Google Gemini AI integration
+├── edge_ai_service.py      # VILA JPS live monitoring (WebSocket alerts) + legacy test monitor
 ├── relay_manager.py     # ffmpeg RTSP relay process management
 ├── pdf_service.py       # PDF report generation (ReportLab)
 ├── video_recorder.py    # Video recording during patrols (OpenCV)
@@ -36,10 +36,10 @@ database.py         -- Schema init (init_db called before service imports)
 settings_service.py -- Reads global_settings table
     |
 robot_service.py    -- Connects to Kachaka (reads ROBOT_IP from env)
-ai_service.py       -- Configures Gemini client (reads API key from settings)
+cloud_ai_service.py       -- Configures Gemini client (reads API key from settings)
 relay_manager.py    -- Manages ffmpeg subprocesses (singleton, starts monitor thread)
 patrol_service.py   -- Imports robot_service, ai_service, relay_manager, live_monitor
-live_monitor.py     -- Used by patrol_service (VILA JPS API + WebSocket)
+edge_ai_service.py     -- Used by patrol_service (VILA JPS API + WebSocket)
 pdf_service.py      -- Reads from database for report data
 video_recorder.py   -- Used by patrol_service
 utils.py            -- Used by patrol_service, app.py
@@ -82,7 +82,7 @@ Reads environment variables and defines filesystem paths.
 
 | Path | Value | Description |
 |------|-------|-------------|
-| `live_alerts` dir | `{ROBOT_DATA_DIR}/report/live_alerts` | Live monitor evidence images (created at runtime) |
+| `edge_ai_alerts` dir | `{ROBOT_DATA_DIR}/report/edge_ai_alerts` | Live monitor evidence images (created at runtime) |
 
 Also defines `DEFAULT_SETTINGS` dict with default values for all global settings, and `ensure_dirs()` / `migrate_legacy_files()` functions.
 
@@ -169,7 +169,7 @@ with db_context() as (conn, cursor):
 | `last_seen` | TEXT | Last heartbeat time |
 | `status` | TEXT | `online` or `offline` |
 
-**`live_alerts`** -- Live monitor alerts triggered during patrol
+**`edge_ai_alerts`** -- Live monitor alerts triggered during patrol
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -230,7 +230,7 @@ Manages the gRPC connection to a Kachaka robot.
 
 **Auto-reconnect:** The polling loop resets `self.client = None` on persistent errors, triggering reconnection on the next poll cycle.
 
-### `ai_service.py`
+### `cloud_ai_service.py`
 
 AI integration for visual inspection and report generation. Uses Google Gemini as the VLM provider.
 
@@ -297,7 +297,7 @@ Orchestrates autonomous patrol missions.
 4. Optionally start video recording
 5. Start RTSP relays (if `enable_robot_camera_relay` or `enable_external_rtsp` is enabled)
 6. Wait 3s for streams to establish
-7. Start live monitor (if streams, rules, and `vila_jps_url` are configured)
+7. Start live monitor (if streams, rules, and `jetson_host` are configured)
 8. For each waypoint:
    a. Move robot to point (`_move_to_point`)
    b. Wait 2 seconds for stability
@@ -319,11 +319,11 @@ Orchestrates autonomous patrol missions.
 
 **Image naming:** Images are saved as `{point_name}_processing_{uuid}.jpg` during capture, then renamed to `{point_name}_{OK|NG}_{uuid}.jpg` after AI analysis.
 
-### `live_monitor.py`
+### `edge_ai_service.py`
 
 Background camera monitoring via VILA JPS during patrol, plus a legacy test monitor for the settings page.
 
-**Singletons:** `live_monitor = LiveMonitor()`, `test_live_monitor = TestLiveMonitor()`
+**Singletons:** `edge_ai_monitor = LiveMonitor()`, `test_edge_ai = TestLiveMonitor()`
 
 #### VILA JPS API Integration (LiveMonitor)
 

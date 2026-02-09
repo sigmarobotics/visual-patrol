@@ -17,7 +17,7 @@ import requests
 from utils import load_json, save_json, get_current_time_str, get_filename_timestamp
 from database import get_db_connection, db_context, update_run_tokens
 from robot_service import robot_service
-from ai_service import ai_service, parse_ai_response
+from cloud_ai_service import ai_service, parse_ai_response
 from pdf_service import generate_patrol_report
 from logger import get_logger
 from video_recorder import VideoRecorder
@@ -346,11 +346,11 @@ class PatrolService:
             recorder = VideoRecorder(video_filename, robot_service.get_front_camera_image)
             recorder.start()
 
-        # Live monitor setup (VILA JPS API + RTSP relay)
-        from live_monitor import live_monitor
+        # Edge AI setup (VILA JPS API + RTSP relay)
+        from edge_ai_service import edge_ai_monitor
         from relay_manager import relay_manager, relay_service_client
         from config import MEDIAMTX_INTERNAL, JETSON_JPS_API_PORT, JETSON_MEDIAMTX_PORT
-        live_monitor_active = False
+        edge_ai_active = False
         use_relay_service = relay_service_client and relay_service_client.is_available()
 
         if relay_service_client and not use_relay_service:
@@ -364,7 +364,7 @@ class PatrolService:
                 tg_config = {"bot_token": tg_token, "user_id": tg_user}
 
         jetson_host = settings.get("jetson_host", "")
-        if settings.get("enable_live_monitor") and jetson_host:
+        if settings.get("enable_edge_ai") and jetson_host:
             # Derive URLs from Jetson host (JPS + mediamtx are co-located on Jetson)
             vila_jps_url = f"http://{jetson_host}:{JETSON_JPS_API_PORT}"
             mediamtx_for_jps = f"localhost:{JETSON_MEDIAMTX_PORT}"  # JPS perspective (co-located)
@@ -426,16 +426,16 @@ class PatrolService:
                         logger.error(f"Stream not available on mediamtx: {s['name']}")
                 streams = verified
 
-            rules = settings.get("live_monitor_rules", [])
+            rules = settings.get("edge_ai_rules", [])
             if streams and rules:
-                live_monitor.start(self.current_run_id, {
+                edge_ai_monitor.start(self.current_run_id, {
                     "vila_jps_url": vila_jps_url,
                     "streams": streams,
                     "rules": rules,
                     "telegram_config": tg_config,
                     "mediamtx_external": mediamtx_for_jps,
                 })
-                live_monitor_active = True
+                edge_ai_active = True
 
         inspections_data = []
         turbo_mode = settings.get('turbo_mode', False)
@@ -478,12 +478,12 @@ class PatrolService:
                     turbo_mode, inspections_data
                 )
         finally:
-            # Ensure live monitor is always stopped
-            if live_monitor_active:
+            # Ensure edge AI monitor is always stopped
+            if edge_ai_active:
                 try:
-                    live_monitor.stop()
+                    edge_ai_monitor.stop()
                 except Exception as e:
-                    logger.error(f"Error stopping live monitor: {e}")
+                    logger.error(f"Error stopping edge AI monitor: {e}")
             # Ensure RTSP relays are always stopped
             try:
                 if use_relay_service:
@@ -557,7 +557,7 @@ class PatrolService:
                 logger.error(f"DB Error updating patrol status: {e}")
 
             self._set_status("Generating Report...")
-            live_alert_data = live_monitor.get_alerts() if live_monitor_active else []
+            live_alert_data = edge_ai_monitor.get_alerts() if edge_ai_active else []
             self._generate_report(inspections_data, settings, video_analysis_text, live_alert_data)
 
             self._set_status("Finished")
@@ -661,7 +661,7 @@ class PatrolService:
                 report_prompt += f"\n\nVideo Analysis Summary:\n{video_analysis_text}\n\n"
 
             if live_alert_data:
-                report_prompt += f"\n\nLive Monitor Alerts ({len(live_alert_data)} triggered):\n"
+                report_prompt += f"\n\nEdge AI Alerts ({len(live_alert_data)} triggered):\n"
                 for alert in live_alert_data:
                     report_prompt += f"- [{alert['timestamp']}] Rule: {alert['rule']} -> {alert['response']}\n"
                 report_prompt += "\n"

@@ -201,7 +201,7 @@ Renders three separate table views:
 - Displays latest AI analysis result
 - Shows scrollable history of current patrol results
 - Manages camera stream (active during patrol, optionally during idle)
-- **Live Alerts panel**: When live monitoring is active, polls `GET /api/{id}/patrol/live_alerts` each second and renders triggered alerts in a red-themed collapsible panel with a badge counter. Alerts show rule, stream source, timestamp, and evidence image.
+- **Live Alerts panel**: When live monitoring is active, polls `GET /api/{id}/patrol/edge_ai_alerts` each second and renders triggered alerts in a red-themed collapsible panel with a badge counter. Alerts show rule, stream source, timestamp, and evidence image.
 
 ### `schedule.js` -- Scheduled Patrols
 

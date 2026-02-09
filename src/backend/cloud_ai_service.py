@@ -1,16 +1,12 @@
 """
 AI Service - VLM integration for inspection analysis.
-Supports Google Gemini and NVIDIA VILA as providers.
+Uses Google Gemini as the VLM provider.
 """
 
-import base64
-import io
 import json
 import re
 import time
 
-import requests
-from PIL import Image as PILImage
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -18,7 +14,7 @@ from pydantic import BaseModel, Field
 import settings_service
 from logger import get_logger
 
-logger = get_logger("ai_service", "ai_service.log")
+logger = get_logger("cloud_ai_service", "cloud_ai_service.log")
 
 
 class InspectionResult(BaseModel):
@@ -243,236 +239,38 @@ class _GeminiProvider:
 
 
 # ---------------------------------------------------------------------------
-# VILA Provider
-# ---------------------------------------------------------------------------
-_ZERO_USAGE = {"prompt_token_count": 0, "candidates_token_count": 0, "total_token_count": 0}
-
-
-class _VilaProvider:
-    """NVIDIA VILA VLM provider (via HTTP microservice)."""
-
-    def __init__(self):
-        self.server_url = "http://localhost:9000"
-        self.model_name = "VILA1.5-3B"
-        self.alert_url = ""
-
-    def configure(self, settings):
-        url = (settings.get("vila_server_url") or "http://localhost:9000").strip().rstrip("/")
-        if url and not url.startswith(("http://", "https://")):
-            url = f"http://{url}"
-        self.server_url = url
-        self.model_name = settings.get("vila_model") or "VILA1.5-3B"
-
-        alert_url = (settings.get("vila_alert_url") or "").strip().rstrip("/")
-        if alert_url and not alert_url.startswith(("http://", "https://")):
-            alert_url = f"http://{alert_url}"
-        self.alert_url = alert_url
-
-    def get_model_name(self):
-        return self.model_name
-
-    def is_configured(self):
-        return bool(self.server_url)
-
-    def _call_alert(self, image_b64_list, user_prompts, system_prompt="", max_tokens=128):
-        """GET to VILA alert/completions endpoint."""
-        url = f"{self.alert_url}/v1/alert/completions"
-        body = {
-            "system_prompt": system_prompt,
-            "images": image_b64_list,
-            "user_prompts": user_prompts,
-            "max_tokens": max_tokens,
-            "min_tokens": 1,
-        }
-        logger.info(f"VILA alert request to {url} (max_tokens={max_tokens})")
-        resp = requests.get(url, json=body, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["alert_response"]  # list of strings
-
-    def _call_chat(self, messages, max_tokens=512):
-        """POST to VILA microservice /v1/chat/completions."""
-        url = f"{self.server_url}/v1/chat/completions"
-        body = {
-            "messages": messages,
-            "max_tokens": max_tokens,
-        }
-
-        logger.info(f"VILA request to {url} (max_tokens={max_tokens})")
-        resp = requests.post(url, json=body, timeout=120)
-        resp.raise_for_status()
-
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-
-        # content is a plain string from the microservice
-        if isinstance(content, list):
-            # handle [{"type":"text","text":"..."}] just in case
-            content = " ".join(
-                item.get("text", "") if isinstance(item, dict) else str(item)
-                for item in content
-            )
-
-        return content
-
-    def generate_inspection(self, image, user_prompt, system_prompt=None):
-        # PIL Image → base64 JPEG
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        data_url = f"data:image/jpeg;base64,{b64}"
-
-        if self.alert_url:
-            # Alert API — optimized for yes/no answers
-            alert_system = (
-                "You are a building safety inspector. "
-                "Evaluate the image based on the question. "
-                "Your response MUST be 'yes' if there is a problem/abnormality, or 'no' if everything is normal."
-            )
-            try:
-                responses = self._call_alert(
-                    [data_url],
-                    [user_prompt],
-                    system_prompt=alert_system,
-                    max_tokens=64,
-                )
-                answer = responses[0].strip().lower() if responses else ""
-                logger.info(f"VILA alert raw: {answer}")
-                # Handle both English and Chinese yes/no
-                _YES = ("yes", "是", "有", "異常", "异常")
-                _NO = ("no", "不", "没", "沒", "否", "正常")
-                if any(answer.startswith(w) for w in _YES):
-                    is_ng = True
-                elif any(answer.startswith(w) for w in _NO):
-                    is_ng = False
-                else:
-                    # Fallback keyword heuristic
-                    is_ng = any(kw in answer for kw in [
-                        "yes", "abnormal", "problem", "issue", "hazard",
-                        "是", "異常", "问题", "問題", "危險",
-                    ])
-                description = f"{user_prompt} → {responses[0].strip()}" if responses else "No response"
-                return {
-                    "result": {"is_NG": is_ng, "Description": description},
-                    "usage": _ZERO_USAGE,
-                }
-            except Exception as e:
-                logger.error(f"VILA Alert Error: {e}")
-                raise
-
-        # Fallback: Chat API
-        prompt = (
-            f"Question: {user_prompt}\n"
-            "Look at the image and answer the question. "
-            "First say YES or NO, then describe what you see in one sentence."
-        )
-
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": data_url}},
-                {"type": "text", "text": prompt},
-            ]
-        }]
-
-        try:
-            text = self._call_chat(messages, max_tokens=256)
-            logger.info(f"VILA inspection raw: {text[:300]}")
-
-            # Try to extract JSON if model happens to return it
-            parsed = _extract_json_from_text(text)
-            if parsed and "is_NG" in parsed:
-                return {"result": parsed, "usage": _ZERO_USAGE}
-
-            # Keyword heuristic on the free-text response
-            text_lower = text.lower()
-            is_ng = any(kw in text_lower for kw in [
-                "yes", "abnormal", "hazard", "issue", "damage", "risk", "problem", "ng",
-                "異常", "問題", "危險", "損壞",
-            ])
-            return {
-                "result": {"is_NG": is_ng, "Description": text.strip()},
-                "usage": _ZERO_USAGE,
-            }
-        except Exception as e:
-            logger.error(f"VILA Inspection Error: {e}")
-            raise
-
-    def generate_report(self, report_prompt):
-        prompt = report_prompt or "Generate a summary report of the patrol."
-        messages = [{"role": "user", "content": prompt}]
-
-        try:
-            text = self._call_chat(messages, max_tokens=512)
-            return {"result": text, "usage": _ZERO_USAGE}
-        except Exception as e:
-            logger.error(f"VILA Report Error: {e}")
-            raise
-
-    def analyze_video(self, video_path, user_prompt):
-        try:
-            with open(video_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            data_url = f"data:video/mp4;base64,{b64}"
-            logger.warning(f"VILA video base64 size: {len(b64)} chars")
-
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "video_url", "video_url": {"url": data_url}},
-                    {"type": "text", "text": user_prompt},
-                ]
-            }]
-
-            text = self._call_chat(messages, max_tokens=512)
-            return {"result": text, "usage": _ZERO_USAGE}
-        except Exception as e:
-            logger.error(f"VILA Video Error: {e}")
-            raise
-
-
-# ---------------------------------------------------------------------------
-# AIService Facade
+# AIService (Gemini only)
 # ---------------------------------------------------------------------------
 class AIService:
-    """VLM service facade — delegates to the active provider (Gemini or VILA)."""
+    """VLM service — uses Google Gemini for inspection analysis."""
 
     def __init__(self):
         self._gemini = _GeminiProvider()
-        self._vila = _VilaProvider()
-        self._active_provider_name = "gemini"
         self._configure()
 
     def _configure(self):
         settings = settings_service.get_all()
-        self._active_provider_name = settings.get("vlm_provider", "gemini")
         self._gemini.configure(settings)
-        self._vila.configure(settings)
-
-    @property
-    def _provider(self):
-        providers = {"gemini": self._gemini, "vila": self._vila}
-        return providers.get(self._active_provider_name, self._gemini)
 
     def get_model_name(self):
         self._configure()
-        return self._provider.get_model_name()
+        return self._gemini.get_model_name()
 
     def is_configured(self):
         self._configure()
-        return self._provider.is_configured()
+        return self._gemini.is_configured()
 
     def generate_inspection(self, image, user_prompt, system_prompt=None):
         self._configure()
-        return self._provider.generate_inspection(image, user_prompt, system_prompt)
+        return self._gemini.generate_inspection(image, user_prompt, system_prompt)
 
     def generate_report(self, report_prompt):
         self._configure()
-        return self._provider.generate_report(report_prompt)
+        return self._gemini.generate_report(report_prompt)
 
     def analyze_video(self, video_path, user_prompt):
         self._configure()
-        return self._provider.analyze_video(video_path, user_prompt)
+        return self._gemini.analyze_video(video_path, user_prompt)
 
 
 ai_service = AIService()

@@ -201,7 +201,7 @@ window.deletePoint = deletePoint;
 - 顯示最新 AI 分析結果
 - 顯示目前巡檢結果的可捲動歷史
 - 管理鏡頭串流 (巡檢期間啟用，閒置時選擇性啟用)
-- **即時警報面板**：當即時監控啟用時，每秒輪詢 `GET /api/{id}/patrol/live_alerts`，以紅色主題的可折疊面板顯示觸發的警報，含計數徽章
+- **即時警報面板**：當即時監控啟用時，每秒輪詢 `GET /api/{id}/patrol/edge_ai_alerts`，以紅色主題的可折疊面板顯示觸發的警報，含計數徽章
 
 ### `schedule.js` -- 排程巡檢
 

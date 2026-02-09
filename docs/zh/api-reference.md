@@ -157,17 +157,17 @@
 
 ## 即時監控測試 (機器人專屬)
 
-### POST `/api/{id}/test_live_monitor/start`
+### POST `/api/{id}/test_edge_ai/start`
 
-啟動即時監控測試。擷取鏡頭畫面並送往 VILA chat completions API。
+啟動即時監控測試。啟動 relay、向 VILA JPS 註冊串流、設定警報規則，並監聽 WebSocket 警報。
 
 **請求：**
 ```json
 {
-  "vila_alert_url": "http://192.168.50.35:9000",
+  "jetson_host": "192.168.50.35",
   "rules": ["有沒有人？", "有沒有異常？"],
-  "interval": 5,
-  "system_prompt": "Answer only yes or no."
+  "stream_source": "robot_camera",
+  "external_rtsp_url": ""
 }
 ```
 
@@ -180,7 +180,7 @@
 
 **錯誤：** `400` (缺少 URL 或規則)、`409` (測試已在執行中)。
 
-### POST `/api/{id}/test_live_monitor/stop`
+### POST `/api/{id}/test_edge_ai/stop`
 
 停止執行中的測試。
 
@@ -189,7 +189,7 @@
 { "status": "stopped" }
 ```
 
-### GET `/api/{id}/test_live_monitor/status`
+### GET `/api/{id}/test_edge_ai/status`
 
 返回目前測試狀態及結果。
 
@@ -251,7 +251,7 @@
 { "status": "stopping" }
 ```
 
-### GET `/api/{id}/patrol/live_alerts`
+### GET `/api/{id}/patrol/edge_ai_alerts`
 
 回傳目前進行中巡檢的即時監控警報。若無進行中的巡檢或即時監控未啟用，則回傳空列表。
 
@@ -262,7 +262,7 @@
     "id": 1,
     "rule": "Is there a person lying on the floor?",
     "response": "yes",
-    "image_path": "report/live_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
+    "image_path": "report/edge_ai_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
     "timestamp": "2026-02-06 14:05:00"
   }
 ]
@@ -464,13 +464,8 @@
   "telegram_bot_token": "",
   "telegram_user_id": "",
   "telegram_message_prompt": "Based on the patrol inspection results below...",
-  "vila_server_url": "http://192.168.50.35:9000",
-  "vila_model": "VILA1.5-3B",
-  "vila_alert_url": "http://192.168.50.35:9000",
-  "vila_system_prompt": "Answer only yes or no.",
-  "enable_live_monitor": false,
-  "live_monitor_interval": 5,
-  "live_monitor_rules": ["有沒有人？", "有沒有異常？"]
+  "enable_edge_ai": false,
+  "edge_ai_rules": ["有沒有人？", "有沒有異常？"]
 }
 ```
 
@@ -541,13 +536,13 @@
       "robot_id": "robot-a"
     }
   ],
-  "live_alerts": [
+  "edge_ai_alerts": [
     {
       "id": 1,
       "run_id": 42,
       "rule": "Is there a person lying on the floor?",
       "response": "yes",
-      "image_path": "report/live_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
+      "image_path": "report/edge_ai_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
       "timestamp": "2026-02-06 14:05:00",
       "robot_id": "robot-a"
     }

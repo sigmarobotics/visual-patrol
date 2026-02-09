@@ -1,5 +1,5 @@
 """
-Live Monitor - Background camera monitoring via VILA JPS Alert API during patrol.
+Edge AI Service - Background camera monitoring via VILA JPS Alert API during patrol.
 
 Uses VILA JPS Stream API + Alert API + WebSocket for efficient continuous monitoring.
 TestLiveMonitor uses the same JPS flow for settings page quick test (no DB writes).
@@ -21,7 +21,7 @@ from database import db_context
 from logger import get_logger
 from utils import get_current_time_str
 
-logger = get_logger("live_monitor", "live_monitor.log")
+logger = get_logger("edge_ai_service", "edge_ai_service.log")
 
 MAX_RULES = 10
 WS_PORT = 5016
@@ -48,7 +48,7 @@ class LiveMonitor:
         self._config = None
 
     def start(self, run_id, config):
-        """Start live monitoring with VILA JPS API.
+        """Start edge AI monitoring with VILA JPS API.
 
         Args:
             run_id: Current patrol run ID.
@@ -215,7 +215,7 @@ class LiveMonitor:
         ws_host = parsed.hostname
         ws_url = f"ws://{ws_host}:{WS_PORT}/api/v1/alerts/ws"
 
-        evidence_dir = os.path.join(ROBOT_DATA_DIR, "report", "live_alerts")
+        evidence_dir = os.path.join(ROBOT_DATA_DIR, "report", "edge_ai_alerts")
         os.makedirs(evidence_dir, exist_ok=True)
 
         reconnect_count = 0
@@ -309,7 +309,7 @@ class LiveMonitor:
         try:
             with db_context() as (conn, cursor):
                 cursor.execute('''
-                    INSERT INTO live_alerts (run_id, rule, response, image_path, timestamp, robot_id, stream_source)
+                    INSERT INTO edge_ai_alerts (run_id, rule, response, image_path, timestamp, robot_id, stream_source)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (self.current_run_id, rule_string, "triggered", rel_img_path,
                       timestamp, ROBOT_ID, stream_type))
@@ -377,7 +377,7 @@ class LiveMonitor:
 
         try:
             caption = (
-                f"⚠️ Live Monitor Alert\n\n"
+                f"⚠️ Edge AI Alert\n\n"
                 f"Rule: {rule}\n"
                 f"Source: {stream_name}\n"
                 f"Robot: {ROBOT_ID}\n"
@@ -395,7 +395,7 @@ class LiveMonitor:
             logger.error(f"Failed to send Telegram alert: {e}")
 
 
-live_monitor = LiveMonitor()
+edge_ai_monitor = LiveMonitor()
 
 
 # === Test Monitor (settings page: relay → VILA JPS → WebSocket alerts) ===
@@ -860,4 +860,4 @@ class TestLiveMonitor:
         logger.info(f"Test alert: rule='{rule_string}' at {timestamp}")
 
 
-test_live_monitor = TestLiveMonitor()
+test_edge_ai = TestLiveMonitor()

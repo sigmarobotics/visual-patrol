@@ -92,14 +92,14 @@ Manage settings through the **Settings** tab in the web UI, or via the API:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enable_live_monitor` | `false` | Enable live monitoring during patrol |
-| `vila_jps_url` | `""` | VILA JPS API base URL (e.g., `http://localhost:5010`) |
+| `enable_edge_ai` | `false` | Enable live monitoring during patrol |
+| `jetson_host` | `""` | Jetson device IP address (auto-derives JPS, mediamtx, relay URLs) |
 | `enable_robot_camera_relay` | `false` | Relay robot camera (gRPC) to mediamtx via ffmpeg |
 | `enable_external_rtsp` | `false` | Relay an external RTSP camera to mediamtx |
 | `external_rtsp_url` | `""` | External RTSP source URL (e.g., `rtsp://admin:pass@192.168.50.45:554/live`) |
-| `live_monitor_rules` | `[]` | List of yes/no alert rule strings, max 10 (e.g., `["Is there a person?", "Is there fire?"]`) |
+| `edge_ai_rules` | `[]` | List of yes/no alert rule strings, max 10 (e.g., `["Is there a person?", "Is there fire?"]`) |
 
-The live monitor requires at least one stream source (`enable_robot_camera_relay` or `enable_external_rtsp`) and `vila_jps_url` to be set. When enabled, the system:
+The live monitor requires at least one stream source (`enable_robot_camera_relay` or `enable_external_rtsp`) and `jetson_host` to be set. When enabled, the system:
 
 1. Starts ffmpeg relay processes to push camera streams to mediamtx
 2. Registers streams with VILA JPS
@@ -109,17 +109,6 @@ The live monitor requires at least one stream source (`enable_robot_camera_relay
 6. Sends alert photos to Telegram if configured
 
 Each rule has a 60-second cooldown to prevent repeated alerts for the same condition.
-
-### Legacy VILA Settings (Test Monitor)
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `vila_server_url` | `"http://localhost:9000"` | VILA server URL (for legacy chat completions) |
-| `vila_model` | `"VILA1.5-3B"` | VILA model name |
-| `vila_alert_url` | `""` | VILA alert endpoint for test monitor |
-| `live_monitor_interval` | `5` | Seconds between test monitor checks (2-30s) |
-
-These settings are used by the **Test Live Monitor** button on the settings page, which uses the older per-frame chat completions approach for quick testing.
 
 ### Report Prompts
 
@@ -184,10 +173,8 @@ DEFAULT_SETTINGS = {
     "report_prompt": "...",  # Chinese inspection table template
     "multiday_report_prompt": "Generate a comprehensive summary...",
     "telegram_message_prompt": "Based on the patrol inspection results below...",
-    "enable_live_monitor": False,
-    "live_monitor_interval": 5,
-    "live_monitor_rules": [],
-    "vila_jps_url": "",
+    "enable_edge_ai": False,
+    "edge_ai_rules": [],
     "enable_robot_camera_relay": False,
     "enable_external_rtsp": False,
     "external_rtsp_url": "",
@@ -271,10 +258,10 @@ Log files are written to `LOG_DIR` with robot-ID prefixes:
 | Log File | Source | Content |
 |----------|--------|---------|
 | `{robot_id}_app.log` | `app.py` | Flask application logs |
-| `{robot_id}_ai_service.log` | `ai_service.py` | AI inference logs, token usage |
+| `{robot_id}_cloud_ai_service.log` | `cloud_ai_service.py` | AI inference logs, token usage |
 | `{robot_id}_patrol_service.log` | `patrol_service.py` | Patrol execution logs |
 | `{robot_id}_video_recorder.log` | `video_recorder.py` | Video recording logs |
-| `{robot_id}_live_monitor.log` | `live_monitor.py` | Live monitor alert logs, WebSocket status |
+| `{robot_id}_edge_ai_service.log` | `edge_ai_service.py` | Live monitor alert logs, WebSocket status |
 | `{robot_id}_relay_manager.log` | `relay_manager.py` | ffmpeg relay process logs |
 
 All loggers use `TimezoneFormatter` which formats timestamps in the configured timezone. Flask/Werkzeug request logging is suppressed (set to ERROR level).

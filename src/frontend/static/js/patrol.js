@@ -51,7 +51,7 @@ function startPatrolPolling() {
         updateCameraStream(shouldStream);
 
         loadResults();
-        loadLiveAlerts(data.is_patrolling);
+        loadEdgeAIAlerts(data.is_patrolling);
     }, 1000);
 }
 
@@ -135,10 +135,10 @@ export async function loadResults() {
     });
 }
 
-async function loadLiveAlerts(isPatrolling) {
-    const frame = document.getElementById('live-alerts-frame');
-    const list = document.getElementById('live-alerts-list');
-    const badge = document.getElementById('live-alerts-badge');
+async function loadEdgeAIAlerts(isPatrolling) {
+    const frame = document.getElementById('edge-ai-alerts-frame');
+    const list = document.getElementById('edge-ai-alerts-list');
+    const badge = document.getElementById('edge-ai-alerts-badge');
     if (!frame || !list) return;
 
     if (!isPatrolling || !state.selectedRobotId) {
@@ -150,7 +150,7 @@ async function loadLiveAlerts(isPatrolling) {
     }
 
     try {
-        const res = await fetch(`/api/${state.selectedRobotId}/patrol/live_alerts`);
+        const res = await fetch(`/api/${state.selectedRobotId}/patrol/edge_ai_alerts`);
         const alerts = await res.json();
 
         if (alerts.length === 0) {
@@ -178,9 +178,9 @@ async function loadLiveAlerts(isPatrolling) {
     }
 }
 
-window.toggleLiveAlertsPanel = function() {
-    const content = document.getElementById('live-alerts-content');
-    const toggle = document.getElementById('live-alerts-toggle');
+window.toggleEdgeAIAlertsPanel = function() {
+    const content = document.getElementById('edge-ai-alerts-content');
+    const toggle = document.getElementById('edge-ai-alerts-toggle');
     if (content && toggle) {
         const hidden = content.style.display === 'none';
         content.style.display = hidden ? 'block' : 'none';

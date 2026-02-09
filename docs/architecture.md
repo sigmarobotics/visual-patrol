@@ -142,10 +142,10 @@ Any backend can serve global requests because they all share the same database.
    ├── On alert → WebSocket event delivered to backend
    │   ├── Cooldown check (60s per rule+stream)
    │   ├── Capture evidence frame from mediamtx (cv2 RTSP)
-   │   ├── Save JPEG to data/{robot_id}/report/live_alerts/
-   │   ├── INSERT INTO live_alerts
+   │   ├── Save JPEG to data/{robot_id}/report/edge_ai_alerts/
+   │   ├── INSERT INTO edge_ai_alerts
    │   └── Send Telegram photo if configured
-   └── Alerts visible in patrol dashboard via /api/{id}/patrol/live_alerts
+   └── Alerts visible in patrol dashboard via /api/{id}/patrol/edge_ai_alerts
 
 4. Patrol ends
    ├── LiveMonitor.stop()
@@ -172,7 +172,7 @@ data/
 │   └── report/
 │       ├── images/            # Inspection photos
 │       │   └── {run_id}_{timestamp}/
-│       └── live_alerts/       # Live monitor evidence images
+│       └── edge_ai_alerts/       # Live monitor evidence images
 ├── robot-b/
 │   └── ...
 ```

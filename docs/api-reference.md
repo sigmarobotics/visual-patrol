@@ -155,20 +155,21 @@ Capture an image from the front camera and run AI analysis.
 
 ---
 
-## Test Live Monitor (robot-specific)
+## Test Edge AI (robot-specific)
 
-Uses the legacy VILA chat completions API for quick testing from the settings page.
+Uses VILA JPS streaming pipeline (relay → mediamtx → JPS → WebSocket alerts) for quick testing from the settings page.
 
-### POST `/api/{id}/test_live_monitor/start`
+### POST `/api/{id}/test_edge_ai/start`
 
-Start a test live monitor session. Captures camera frames and sends them to the VILA chat completions API.
+Start a test live monitor session. Starts relay, registers stream with VILA JPS, sets alert rules, and listens for WebSocket alerts.
 
 **Request:**
 ```json
 {
-  "vila_alert_url": "http://192.168.50.35:9000",
+  "jetson_host": "192.168.50.35",
   "rules": ["Is there a person?", "Is there fire?"],
-  "interval": 5
+  "stream_source": "robot_camera",
+  "external_rtsp_url": ""
 }
 ```
 
@@ -181,7 +182,7 @@ All fields are optional -- falls back to saved settings if omitted.
 
 **Errors:** `400` (missing URL or rules), `409` (test already running).
 
-### POST `/api/{id}/test_live_monitor/stop`
+### POST `/api/{id}/test_edge_ai/stop`
 
 Stop the running test session.
 
@@ -190,7 +191,7 @@ Stop the running test session.
 { "status": "stopped" }
 ```
 
-### GET `/api/{id}/test_live_monitor/status`
+### GET `/api/{id}/test_edge_ai/status`
 
 Returns the current test session state and results.
 
@@ -250,7 +251,7 @@ Stop the current patrol. The robot cancels its current command and returns home.
 { "status": "stopping" }
 ```
 
-### GET `/api/{id}/patrol/live_alerts`
+### GET `/api/{id}/patrol/edge_ai_alerts`
 
 Returns live monitor alerts for the currently active patrol run. Returns empty list if no patrol is active or live monitor is not enabled.
 
@@ -261,7 +262,7 @@ Returns live monitor alerts for the currently active patrol run. Returns empty l
     "id": 1,
     "rule": "Is there a person lying on the floor?",
     "response": "triggered",
-    "image_path": "report/live_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
+    "image_path": "report/edge_ai_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
     "timestamp": "2026-02-06 14:05:00",
     "stream_source": "robot_camera"
   }
@@ -492,15 +493,15 @@ Quick-test the robot camera relay. Starts a relay, waits 3 seconds, checks statu
 }
 ```
 
-### GET `/api/vila/health`
+### GET `/api/edge_ai/health`
 
-Check VILA JPS API health by calling `GET {vila_jps_url}/api/v1/health/ready`.
+Check VILA JPS API health by deriving the JPS URL from `jetson_host` and calling `GET http://{jetson_host}:5010/api/v1/health/ready`.
 
 **Response (healthy):**
 ```json
 {
   "status": "ok",
-  "vila_jps_url": "http://localhost:5010"
+  "code": 200
 }
 ```
 
@@ -508,12 +509,11 @@ Check VILA JPS API health by calling `GET {vila_jps_url}/api/v1/health/ready`.
 ```json
 {
   "status": "error",
-  "error": "Connection refused",
-  "vila_jps_url": "http://localhost:5010"
+  "error": "Connection refused"
 }
 ```
 
-**Errors:** `400` if `vila_jps_url` is not configured.
+**Errors:** `400` if `jetson_host` is not configured.
 
 ---
 
@@ -542,13 +542,9 @@ Check VILA JPS API health by calling `GET {vila_jps_url}/api/v1/health/ready`.
   "telegram_bot_token": "",
   "telegram_user_id": "",
   "telegram_message_prompt": "Based on the patrol inspection results below...",
-  "vila_server_url": "http://192.168.50.35:9000",
-  "vila_model": "VILA1.5-3B",
-  "vila_alert_url": "http://192.168.50.35:9000",
-  "enable_live_monitor": false,
-  "live_monitor_interval": 5,
-  "live_monitor_rules": ["Is there a person?", "Is there fire?"],
-  "vila_jps_url": "http://localhost:5010",
+  "enable_edge_ai": false,
+  "edge_ai_rules": ["Is there a person?", "Is there fire?"],
+  "jetson_host": "192.168.50.35",
   "enable_robot_camera_relay": false,
   "enable_external_rtsp": false,
   "external_rtsp_url": ""
@@ -622,13 +618,13 @@ Returns detailed patrol run info with all inspection results and live alerts.
       "robot_id": "robot-a"
     }
   ],
-  "live_alerts": [
+  "edge_ai_alerts": [
     {
       "id": 1,
       "run_id": 42,
       "rule": "Is there a person lying on the floor?",
       "response": "triggered",
-      "image_path": "report/live_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
+      "image_path": "report/edge_ai_alerts/42_1707200000_Is_there_a_person_lying_on_the_floor_.jpg",
       "timestamp": "2026-02-06 14:05:00",
       "robot_id": "robot-a",
       "stream_source": "robot_camera"

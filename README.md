@@ -116,8 +116,8 @@ visual-patrol/
 │   │   ├── app.py              # Flask REST API
 │   │   ├── robot_service.py    # Kachaka gRPC interface
 │   │   ├── patrol_service.py   # Patrol orchestration
-│   │   ├── ai_service.py       # Gemini AI integration
-│   │   ├── live_monitor.py     # VILA JPS live monitoring (WebSocket alerts)
+│   │   ├── cloud_ai_service.py       # Gemini AI integration
+│   │   ├── edge_ai_service.py     # VILA JPS live monitoring (WebSocket alerts)
 │   │   ├── relay_manager.py    # ffmpeg RTSP relay process management
 │   │   ├── settings_service.py # Global settings (DB-backed)
 │   │   ├── pdf_service.py      # PDF report generation
@@ -180,7 +180,7 @@ visual-patrol/
 | `/api/{id}/patrol/schedule` | GET/POST | Manage scheduled patrols |
 | `/api/{id}/patrol/schedule/{sid}` | PUT/DELETE | Update or delete schedule |
 | `/api/{id}/patrol/results` | GET | Current run inspection results |
-| `/api/{id}/patrol/live_alerts` | GET | Live monitor alerts for current run |
+| `/api/{id}/patrol/edge_ai_alerts` | GET | Live monitor alerts for current run |
 
 ### Points (robot-specific)
 | Endpoint | Method | Description |
@@ -197,7 +197,7 @@ visual-patrol/
 |----------|--------|-------------|
 | `/api/relay/status` | GET | RTSP relay process statuses |
 | `/api/relay/test` | POST | Quick-test robot camera relay |
-| `/api/vila/health` | GET | VILA JPS health check |
+| `/api/edge_ai/health` | GET | VILA JPS health check |
 
 ### Global Endpoints
 | Endpoint | Method | Description |
@@ -229,12 +229,12 @@ Settings are stored in a shared SQLite database (`data/report/report.db`, table 
 | `enable_idle_stream` | Camera stream when not patrolling |
 | `enable_telegram` | Telegram notifications on patrol completion |
 | `telegram_bot_token` / `telegram_user_id` | Telegram config |
-| `vila_jps_url` | VILA JPS API base URL (e.g. `http://localhost:5010`) |
+| `jetson_host` | Jetson device IP address (auto-derives JPS, mediamtx, relay URLs) |
 | `enable_robot_camera_relay` | Relay robot camera to mediamtx via ffmpeg |
 | `enable_external_rtsp` | Relay external RTSP camera to mediamtx |
 | `external_rtsp_url` | External RTSP camera source URL |
-| `enable_live_monitor` | Enable VILA JPS live monitoring during patrol |
-| `live_monitor_rules` | List of yes/no alert rules for live monitoring |
+| `enable_edge_ai` | Enable VILA JPS live monitoring during patrol |
+| `edge_ai_rules` | List of yes/no alert rules for live monitoring |
 
 Per-robot settings (`ROBOT_ID`, `ROBOT_NAME`, `ROBOT_IP`, `MEDIAMTX_*`) are set via environment variables in `docker-compose.yml`.
 
@@ -269,12 +269,12 @@ python src/backend/app.py
 |---------|----------|
 | Robot shows "offline" | Check `ROBOT_IP` in docker-compose.yml; ensure robot is on same network |
 | Robot dropdown empty | Verify backends are running: `docker compose ps` |
-| AI analysis failed | Verify Gemini API key in Settings; check `logs/{robot-id}_ai_service.log` |
+| AI analysis failed | Verify Gemini API key in Settings; check `logs/{robot-id}_cloud_ai_service.log` |
 | PDF generation failed | Check `logs/{robot-id}_app.log` |
 | Camera stream not loading | Enable "Continuous Camera Stream" in Settings; check robot connection |
 | Map not loading | Robot may still be connecting; check container logs for gRPC errors |
 | mediamtx not reachable | Ensure mediamtx is running (deployed with VILA JPS stack); check `MEDIAMTX_*` env vars |
-| Live monitor not triggering | Verify VILA JPS is running, streams are registered (`/api/relay/status`), and `vila_jps_url` is set |
+| Live monitor not triggering | Verify VILA JPS is running, streams are registered (`/api/relay/status`), and `jetson_host` is set |
 
 ## Documentation
 

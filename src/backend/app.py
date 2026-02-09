@@ -30,8 +30,8 @@ init_db()
 import settings_service
 from robot_service import robot_service
 from patrol_service import patrol_service
-from ai_service import ai_service
-from live_monitor import test_live_monitor
+from cloud_ai_service import ai_service
+from edge_ai_service import test_edge_ai
 from relay_manager import relay_manager
 from pdf_service import generate_patrol_report, generate_analysis_report
 
@@ -201,11 +201,11 @@ def test_ai_route():
         return jsonify({"error": str(e)}), 500
 
 
-# --- Test Live Monitor API (relay → VILA JPS → WebSocket alerts) ---
+# --- Test Edge AI API (relay → VILA JPS → WebSocket alerts) ---
 
-@app.route('/api/test_live_monitor/start', methods=['POST'])
-def test_live_monitor_start():
-    if test_live_monitor.is_running:
+@app.route('/api/test_edge_ai/start', methods=['POST'])
+def test_edge_ai_start():
+    if test_edge_ai.is_running:
         return jsonify({"error": "Test already running"}), 409
 
     data = request.json or {}
@@ -218,14 +218,14 @@ def test_live_monitor_start():
     from config import JETSON_JPS_API_PORT, JETSON_MEDIAMTX_PORT
     vila_jps_url = f"http://{jetson_host}:{JETSON_JPS_API_PORT}"
 
-    rules = data.get('rules') or settings.get('live_monitor_rules', [])
+    rules = data.get('rules') or settings.get('edge_ai_rules', [])
     if not rules:
         return jsonify({"error": "At least one alert rule is required"}), 400
 
     stream_source = data.get('stream_source', 'robot_camera')
     external_rtsp_url = data.get('external_rtsp_url') or settings.get('external_rtsp_url', '')
 
-    test_live_monitor.start({
+    test_edge_ai.start({
         "vila_jps_url": vila_jps_url,
         "rules": rules,
         "stream_source": stream_source,
@@ -236,29 +236,29 @@ def test_live_monitor_start():
         "mediamtx_external": f"localhost:{JETSON_MEDIAMTX_PORT}",
     })
 
-    if test_live_monitor.error:
-        err = test_live_monitor.error
-        test_live_monitor.error = None
+    if test_edge_ai.error:
+        err = test_edge_ai.error
+        test_edge_ai.error = None
         return jsonify({"error": err}), 500
 
     return jsonify({"status": "started"})
 
 
-@app.route('/api/test_live_monitor/stop', methods=['POST'])
-def test_live_monitor_stop():
-    test_live_monitor.stop()
+@app.route('/api/test_edge_ai/stop', methods=['POST'])
+def test_edge_ai_stop():
+    test_edge_ai.stop()
     return jsonify({"status": "stopped"})
 
 
-@app.route('/api/test_live_monitor/status', methods=['GET'])
-def test_live_monitor_status():
-    return jsonify(test_live_monitor.get_status())
+@app.route('/api/test_edge_ai/status', methods=['GET'])
+def test_edge_ai_status():
+    return jsonify(test_edge_ai.get_status())
 
 
-@app.route('/api/test_live_monitor/snapshot', methods=['GET'])
-def test_live_monitor_snapshot():
+@app.route('/api/test_edge_ai/snapshot', methods=['GET'])
+def test_edge_ai_snapshot():
     """Return latest JPEG frame captured from mediamtx RTSP relay."""
-    frame = test_live_monitor.get_snapshot()
+    frame = test_edge_ai.get_snapshot()
     if not frame:
         return '', 204
     return flask.Response(frame, mimetype='image/jpeg')
@@ -287,8 +287,8 @@ def relay_test():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/vila/health', methods=['GET'])
-def vila_health():
+@app.route('/api/edge_ai/health', methods=['GET'])
+def edge_ai_health():
     """Check VILA JPS health endpoint."""
     settings = settings_service.get_all()
     jetson_host = settings.get("jetson_host", "")
@@ -545,16 +545,16 @@ def handle_patrol_schedule_item(schedule_id):
         patrol_service.delete_schedule(schedule_id)
         return jsonify({"status": "deleted"})
 
-@app.route('/api/patrol/live_alerts', methods=['GET'])
-def get_live_alerts():
-    """Return live monitor alerts for the current patrol run."""
+@app.route('/api/patrol/edge_ai_alerts', methods=['GET'])
+def get_edge_ai_alerts():
+    """Return edge AI alerts for the current patrol run."""
     current_run_id = patrol_service.current_run_id
     if not current_run_id:
         return jsonify([])
 
     with db_context() as (conn, cursor):
         cursor.execute(
-            'SELECT id, rule, response, image_path, timestamp, stream_source FROM live_alerts WHERE run_id = ? ORDER BY id DESC',
+            'SELECT id, rule, response, image_path, timestamp, stream_source FROM edge_ai_alerts WHERE run_id = ? ORDER BY id DESC',
             (current_run_id,)
         )
         rows = cursor.fetchall()
@@ -828,13 +828,13 @@ def get_history_detail(run_id):
         cursor.execute('SELECT * FROM inspection_results WHERE run_id = ?', (run_id,))
         inspections = cursor.fetchall()
 
-        cursor.execute('SELECT * FROM live_alerts WHERE run_id = ? ORDER BY id ASC', (run_id,))
-        live_alerts = cursor.fetchall()
+        cursor.execute('SELECT * FROM edge_ai_alerts WHERE run_id = ? ORDER BY id ASC', (run_id,))
+        edge_ai_alerts = cursor.fetchall()
 
     return jsonify({
         "run": dict(run),
         "inspections": [dict(i) for i in inspections],
-        "live_alerts": [dict(a) for a in live_alerts]
+        "edge_ai_alerts": [dict(a) for a in edge_ai_alerts]
     })
 
 @app.route('/api/report/<int:run_id>/pdf')

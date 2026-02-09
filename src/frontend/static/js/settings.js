@@ -15,10 +15,6 @@ export async function loadSettings() {
     document.getElementById('setting-api-key').value = data.gemini_api_key || '';
     document.getElementById('setting-model').value = data.gemini_model || 'gemini-1.5-flash';
 
-    // VILA / Live Monitor
-    document.getElementById('setting-vila-server-url').value = data.vila_server_url || 'http://localhost:9000';
-    document.getElementById('setting-vila-model').value = data.vila_model || 'VILA1.5-3B';
-    document.getElementById('setting-vila-alert-url').value = data.vila_alert_url || '';
     const tz = data.timezone || 'UTC';
     document.getElementById('setting-timezone').value = tz;
     state.currentSettingsTimezone = tz;
@@ -55,16 +51,13 @@ export async function loadSettings() {
     const telegramMessagePrompt = document.getElementById('setting-telegram-message-prompt');
     if (telegramMessagePrompt) telegramMessagePrompt.value = data.telegram_message_prompt || '';
 
-    // Live monitor settings
-    const liveMonitorCheckbox = document.getElementById('setting-enable-live-monitor');
-    if (liveMonitorCheckbox) liveMonitorCheckbox.checked = data.enable_live_monitor === true;
+    // Edge AI settings
+    const liveMonitorCheckbox = document.getElementById('setting-enable-edge-ai');
+    if (liveMonitorCheckbox) liveMonitorCheckbox.checked = data.enable_edge_ai === true;
 
-    const liveMonitorInterval = document.getElementById('setting-live-monitor-interval');
-    if (liveMonitorInterval) liveMonitorInterval.value = data.live_monitor_interval || 5;
-
-    const liveMonitorRules = document.getElementById('setting-live-monitor-rules');
+    const liveMonitorRules = document.getElementById('setting-edge-ai-rules');
     if (liveMonitorRules) {
-        const rules = data.live_monitor_rules || [];
+        const rules = data.edge_ai_rules || [];
         liveMonitorRules.value = Array.isArray(rules) ? rules.join('\n') : '';
     }
 
@@ -122,10 +115,6 @@ async function saveSettings() {
     const telegramUserVal = document.getElementById('setting-telegram-user-id').value;
 
     const settings = {
-        vlm_provider: 'gemini',
-        vila_server_url: document.getElementById('setting-vila-server-url')?.value || '',
-        vila_model: document.getElementById('setting-vila-model')?.value || '',
-        vila_alert_url: document.getElementById('setting-vila-alert-url')?.value || '',
         gemini_api_key: apiKeyVal,
         gemini_model: document.getElementById('setting-model').value,
         timezone: document.getElementById('setting-timezone').value,
@@ -140,9 +129,8 @@ async function saveSettings() {
         telegram_bot_token: document.getElementById('setting-telegram-bot-token').value,
         telegram_user_id: document.getElementById('setting-telegram-user-id').value,
         telegram_message_prompt: document.getElementById('setting-telegram-message-prompt')?.value || '',
-        enable_live_monitor: document.getElementById('setting-enable-live-monitor')?.checked || false,
-        live_monitor_interval: parseInt(document.getElementById('setting-live-monitor-interval')?.value || '5', 10),
-        live_monitor_rules: (document.getElementById('setting-live-monitor-rules')?.value || '')
+        enable_edge_ai: document.getElementById('setting-enable-edge-ai')?.checked || false,
+        edge_ai_rules: (document.getElementById('setting-edge-ai-rules')?.value || '')
             .split('\n').map(s => s.trim()).filter(s => s.length > 0),
         jetson_host: document.getElementById('setting-jetson-host')?.value || '',
         enable_robot_camera_relay: document.getElementById('setting-stream-source-robot')?.checked || false,
@@ -168,20 +156,20 @@ async function saveSettings() {
     }
 }
 
-// --- Test Live Monitor (relay → VILA JPS → WebSocket alerts) ---
+// --- Test Edge AI (relay → VILA JPS → WebSocket alerts) ---
 let _testStatusPollId = null;
 
-export async function testLiveMonitor() {
-    const btn = document.getElementById('btn-test-live-monitor');
-    const statusEl = document.getElementById('live-monitor-test-status');
-    const resultsEl = document.getElementById('live-monitor-test-results');
+export async function testEdgeAI() {
+    const btn = document.getElementById('btn-test-edge-ai');
+    const statusEl = document.getElementById('edge-ai-test-status');
+    const resultsEl = document.getElementById('edge-ai-test-results');
 
     // If already running, stop it
     if (_testStatusPollId) {
-        await fetch(`/api/${state.selectedRobotId}/test_live_monitor/stop`, { method: 'POST' });
+        await fetch(`/api/${state.selectedRobotId}/test_edge_ai/stop`, { method: 'POST' });
         clearInterval(_testStatusPollId);
         _testStatusPollId = null;
-        btn.textContent = 'Test Live Monitor';
+        btn.textContent = 'Test Edge AI';
         btn.classList.remove('btn-danger');
         statusEl.textContent = 'Stopped';
         return;
@@ -189,7 +177,7 @@ export async function testLiveMonitor() {
 
     // Read current form values
     const jetsonHost = document.getElementById('setting-jetson-host')?.value || '';
-    const rulesText = document.getElementById('setting-live-monitor-rules')?.value || '';
+    const rulesText = document.getElementById('setting-edge-ai-rules')?.value || '';
     const rules = rulesText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
 
     // Determine stream source from radio buttons
@@ -212,7 +200,7 @@ export async function testLiveMonitor() {
     resultsEl.innerHTML = '<div id="test-ws-log"></div>';
 
     try {
-        const res = await fetch(`/api/${state.selectedRobotId}/test_live_monitor/start`, {
+        const res = await fetch(`/api/${state.selectedRobotId}/test_edge_ai/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ jetson_host: jetsonHost, rules, stream_source: streamSource, external_rtsp_url: externalRtspUrl }),
@@ -236,13 +224,13 @@ export async function testLiveMonitor() {
     // Poll for status + WS messages every 2s
     _testStatusPollId = setInterval(async () => {
         try {
-            const res = await fetch(`/api/${state.selectedRobotId}/test_live_monitor/status`);
+            const res = await fetch(`/api/${state.selectedRobotId}/test_edge_ai/status`);
             const status = await res.json();
 
             if (!status.active && _testStatusPollId) {
                 clearInterval(_testStatusPollId);
                 _testStatusPollId = null;
-                btn.textContent = 'Test Live Monitor';
+                btn.textContent = 'Test Edge AI';
                 btn.classList.remove('btn-danger');
                 statusEl.textContent = status.error ? 'Error: ' + status.error : 'Stopped';
                 return;
@@ -275,7 +263,7 @@ export async function testLiveMonitor() {
         } catch (e) { /* ignore */ }
     }, 2000);
 }
-window.testLiveMonitor = testLiveMonitor;
+window.testEdgeAI = testEdgeAI;
 
 export function switchSettingsTab(tabName) {
     document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));

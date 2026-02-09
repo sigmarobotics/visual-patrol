@@ -75,14 +75,8 @@ DEFAULT_SETTINGS = {
 **請以一個完整的 Markdown 表格呈現最終的巡檢報告。**""",
     "multiday_report_prompt": "Generate a comprehensive summary report for the selected period, highlighting trends and anomalies.",
     "telegram_message_prompt": "Based on the patrol inspection results below, generate a concise Telegram notification message in Traditional Chinese. Summarize the overall status, highlight any anomalies (marked X), and keep it under 500 characters. Use emoji sparingly for readability.",
-    "vlm_provider": "gemini",
-    "vila_server_url": "http://localhost:9000",
-    "vila_model": "VILA1.5-3B",
-    "vila_alert_url": "",  # VILA alert endpoint (e.g. http://192.168.50.35:5015), empty = use chat API
-
-    "enable_live_monitor": False,
-    "live_monitor_interval": 5,
-    "live_monitor_rules": [],
+    "enable_edge_ai": False,
+    "edge_ai_rules": [],
 
     "jetson_host": "",
     "enable_robot_camera_relay": False,
