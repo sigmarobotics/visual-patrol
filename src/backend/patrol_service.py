@@ -349,7 +349,7 @@ class PatrolService:
         # Live monitor setup (VILA JPS API + RTSP relay)
         from live_monitor import live_monitor
         from relay_manager import relay_manager, relay_service_client
-        from config import MEDIAMTX_INTERNAL, MEDIAMTX_EXTERNAL
+        from config import MEDIAMTX_INTERNAL, JETSON_JPS_API_PORT, JETSON_MEDIAMTX_PORT
         live_monitor_active = False
         use_relay_service = relay_service_client and relay_service_client.is_available()
 
@@ -363,7 +363,11 @@ class PatrolService:
             if tg_token and tg_user:
                 tg_config = {"bot_token": tg_token, "user_id": tg_user}
 
-        if settings.get("enable_live_monitor") and settings.get("vila_jps_url"):
+        jetson_host = settings.get("jetson_host", "")
+        if settings.get("enable_live_monitor") and jetson_host:
+            # Derive URLs from Jetson host (JPS + mediamtx are co-located on Jetson)
+            vila_jps_url = f"http://{jetson_host}:{JETSON_JPS_API_PORT}"
+            mediamtx_for_jps = f"localhost:{JETSON_MEDIAMTX_PORT}"  # JPS perspective (co-located)
             streams = []
 
             if settings.get("enable_robot_camera_relay"):
@@ -378,7 +382,7 @@ class PatrolService:
                         rtsp_path = relay_manager.start_robot_camera_relay(
                             ROBOT_ID, robot_service.get_front_camera_image, MEDIAMTX_INTERNAL)
                     streams.append({
-                        "rtsp_url": f"rtsp://{MEDIAMTX_EXTERNAL}{rtsp_path}",
+                        "rtsp_url": f"rtsp://{mediamtx_for_jps}{rtsp_path}",
                         "name": f"{ROBOT_NAME} Camera",
                         "type": "robot_camera",
                         "evidence_func": robot_service.get_front_camera_image,
@@ -398,7 +402,7 @@ class PatrolService:
                         rtsp_path = relay_manager.start_external_rtsp_relay(
                             ROBOT_ID, ext_url, MEDIAMTX_INTERNAL)
                     streams.append({
-                        "rtsp_url": f"rtsp://{MEDIAMTX_EXTERNAL}{rtsp_path}",
+                        "rtsp_url": f"rtsp://{mediamtx_for_jps}{rtsp_path}",
                         "name": "External Camera",
                         "type": "external_rtsp",
                     })
@@ -410,11 +414,11 @@ class PatrolService:
                 from relay_manager import wait_for_stream
                 verified = []
                 for s in streams:
-                    s_key = s["rtsp_url"].split(MEDIAMTX_EXTERNAL)[-1].lstrip("/")
+                    s_key = s["rtsp_url"].split(mediamtx_for_jps)[-1].lstrip("/")
                     if use_relay_service:
                         ready = relay_service_client.wait_for_stream(s_key, timeout=15)
                     else:
-                        rtsp_internal = s["rtsp_url"].replace(MEDIAMTX_EXTERNAL, MEDIAMTX_INTERNAL)
+                        rtsp_internal = s["rtsp_url"].replace(mediamtx_for_jps, MEDIAMTX_INTERNAL)
                         ready = wait_for_stream(rtsp_internal, max_wait=15)
                     if ready:
                         verified.append(s)
@@ -425,11 +429,11 @@ class PatrolService:
             rules = settings.get("live_monitor_rules", [])
             if streams and rules:
                 live_monitor.start(self.current_run_id, {
-                    "vila_jps_url": settings["vila_jps_url"],
+                    "vila_jps_url": vila_jps_url,
                     "streams": streams,
                     "rules": rules,
                     "telegram_config": tg_config,
-                    "mediamtx_external": MEDIAMTX_EXTERNAL,
+                    "mediamtx_external": mediamtx_for_jps,
                 })
                 live_monitor_active = True
 

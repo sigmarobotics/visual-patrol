@@ -13,6 +13,10 @@ MEDIAMTX_EXTERNAL = os.getenv("MEDIAMTX_EXTERNAL", "localhost:8554")
 # Relay service (Jetson-side ffmpeg relay, empty = use local RelayManager)
 RELAY_SERVICE_URL = os.getenv("RELAY_SERVICE_URL", "")
 
+# Jetson service ports (fixed, co-located on Jetson)
+JETSON_JPS_API_PORT = 5010
+JETSON_MEDIAMTX_PORT = 8555
+
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -80,7 +84,7 @@ DEFAULT_SETTINGS = {
     "live_monitor_interval": 5,
     "live_monitor_rules": [],
 
-    "vila_jps_url": "",
+    "jetson_host": "",
     "enable_robot_camera_relay": False,
     "enable_external_rtsp": False,
     "external_rtsp_url": "",

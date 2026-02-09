@@ -211,9 +211,12 @@ def test_live_monitor_start():
     data = request.json or {}
     settings = settings_service.get_all()
 
-    vila_jps_url = data.get('vila_jps_url') or settings.get('vila_jps_url', '')
-    if not vila_jps_url:
-        return jsonify({"error": "VILA JPS URL is required"}), 400
+    jetson_host = data.get('jetson_host') or settings.get('jetson_host', '')
+    if not jetson_host:
+        return jsonify({"error": "Jetson Host is required"}), 400
+
+    from config import JETSON_JPS_API_PORT, JETSON_MEDIAMTX_PORT
+    vila_jps_url = f"http://{jetson_host}:{JETSON_JPS_API_PORT}"
 
     rules = data.get('rules') or settings.get('live_monitor_rules', [])
     if not rules:
@@ -229,8 +232,8 @@ def test_live_monitor_start():
         "external_rtsp_url": external_rtsp_url,
         "robot_id": ROBOT_ID,
         "frame_func": robot_service.get_front_camera_image,
-        "mediamtx_internal": MEDIAMTX_INTERNAL,
-        "mediamtx_external": MEDIAMTX_EXTERNAL,
+        "mediamtx_internal": f"{jetson_host}:{JETSON_MEDIAMTX_PORT}",
+        "mediamtx_external": f"localhost:{JETSON_MEDIAMTX_PORT}",
     })
 
     if test_live_monitor.error:
@@ -288,12 +291,14 @@ def relay_test():
 def vila_health():
     """Check VILA JPS health endpoint."""
     settings = settings_service.get_all()
-    vila_jps_url = settings.get("vila_jps_url", "")
-    if not vila_jps_url:
-        return jsonify({"error": "VILA JPS URL not configured"}), 400
+    jetson_host = settings.get("jetson_host", "")
+    if not jetson_host:
+        return jsonify({"error": "Jetson Host not configured"}), 400
+    from config import JETSON_JPS_API_PORT
+    vila_jps_url = f"http://{jetson_host}:{JETSON_JPS_API_PORT}"
     try:
         import requests as req
-        resp = req.get(f"{vila_jps_url.rstrip('/')}/api/v1/health/ready", timeout=5)
+        resp = req.get(f"{vila_jps_url}/api/v1/health/ready", timeout=5)
         return jsonify({"status": "ok" if resp.ok else "error", "code": resp.status_code})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 503

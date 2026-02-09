@@ -545,8 +545,8 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <label>VILA JPS URL</label>
-                            <input type="text" id="setting-vila-jps-url" placeholder="http://localhost:5010">
+                            <label>Jetson Host <span style="font-size:11px;color:var(--text-muted)">(IP or hostname, auto-derives JPS/mediamtx/relay URLs)</span></label>
+                            <input type="text" id="setting-jetson-host" placeholder="192.168.50.35">
                         </div>
                         <div class="form-group">
                             <label>Alert Rules <span style="font-size:11px;color:var(--text-muted)">(max 10, one per line)</span></label>
@@ -594,6 +594,7 @@
 
     <script src="/static/js/chart.min.js"></script>
     <script src="/static/js/marked.min.js"></script>
+
     <script type="module" src="/static/js/app.js"></script>
 </body>
 

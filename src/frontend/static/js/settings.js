@@ -68,9 +68,9 @@ export async function loadSettings() {
         liveMonitorRules.value = Array.isArray(rules) ? rules.join('\n') : '';
     }
 
-    // VILA JPS / Relay settings
-    const vilaJpsUrl = document.getElementById('setting-vila-jps-url');
-    if (vilaJpsUrl) vilaJpsUrl.value = data.vila_jps_url || '';
+    // Jetson host (auto-derives JPS, mediamtx, relay URLs)
+    const jetsonHost = document.getElementById('setting-jetson-host');
+    if (jetsonHost) jetsonHost.value = data.jetson_host || '';
 
     // Stream source radio (mutually exclusive — JPS supports 1 stream)
     const radioRobot = document.getElementById('setting-stream-source-robot');
@@ -144,7 +144,7 @@ async function saveSettings() {
         live_monitor_interval: parseInt(document.getElementById('setting-live-monitor-interval')?.value || '5', 10),
         live_monitor_rules: (document.getElementById('setting-live-monitor-rules')?.value || '')
             .split('\n').map(s => s.trim()).filter(s => s.length > 0),
-        vila_jps_url: document.getElementById('setting-vila-jps-url')?.value || '',
+        jetson_host: document.getElementById('setting-jetson-host')?.value || '',
         enable_robot_camera_relay: document.getElementById('setting-stream-source-robot')?.checked || false,
         enable_external_rtsp: document.getElementById('setting-stream-source-external')?.checked || false,
         external_rtsp_url: document.getElementById('setting-external-rtsp-url')?.value || '',
@@ -170,7 +170,6 @@ async function saveSettings() {
 
 // --- Test Live Monitor (relay → VILA JPS → WebSocket alerts) ---
 let _testStatusPollId = null;
-let _testSnapshotPollId = null;
 
 export async function testLiveMonitor() {
     const btn = document.getElementById('btn-test-live-monitor');
@@ -181,9 +180,7 @@ export async function testLiveMonitor() {
     if (_testStatusPollId) {
         await fetch(`/api/${state.selectedRobotId}/test_live_monitor/stop`, { method: 'POST' });
         clearInterval(_testStatusPollId);
-        if (_testSnapshotPollId) clearInterval(_testSnapshotPollId);
         _testStatusPollId = null;
-        _testSnapshotPollId = null;
         btn.textContent = 'Test Live Monitor';
         btn.classList.remove('btn-danger');
         statusEl.textContent = 'Stopped';
@@ -191,7 +188,7 @@ export async function testLiveMonitor() {
     }
 
     // Read current form values
-    const vilaJpsUrl = document.getElementById('setting-vila-jps-url')?.value || '';
+    const jetsonHost = document.getElementById('setting-jetson-host')?.value || '';
     const rulesText = document.getElementById('setting-live-monitor-rules')?.value || '';
     const rules = rulesText.split('\n').map(s => s.trim()).filter(s => s.length > 0);
 
@@ -200,8 +197,8 @@ export async function testLiveMonitor() {
     const streamSource = radioExternal?.checked ? 'external_rtsp' : 'robot_camera';
     const externalRtspUrl = document.getElementById('setting-external-rtsp-url')?.value || '';
 
-    if (!vilaJpsUrl) {
-        alert('Please enter a VILA JPS URL first.');
+    if (!jetsonHost) {
+        alert('Please enter the Jetson Host IP first.');
         return;
     }
     if (rules.length === 0) {
@@ -212,18 +209,13 @@ export async function testLiveMonitor() {
     // Start test
     statusEl.textContent = 'Starting relay...';
     resultsEl.style.display = 'block';
-    resultsEl.innerHTML =
-        '<div id="test-snapshot-container" style="text-align:center; margin-bottom:8px;">' +
-            '<img id="test-snapshot-img" style="max-width:100%; max-height:240px; border-radius:6px; display:none; margin:0 auto;">' +
-            '<div id="test-snapshot-placeholder" style="color:var(--text-muted); padding:20px; font-size:12px;">Waiting for stream...</div>' +
-        '</div>' +
-        '<div id="test-alerts-container" style="border-top:1px solid var(--border-subtle); padding-top:6px;"></div>';
+    resultsEl.innerHTML = '<div id="test-ws-log"></div>';
 
     try {
         const res = await fetch(`/api/${state.selectedRobotId}/test_live_monitor/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vila_jps_url: vilaJpsUrl, rules, stream_source: streamSource, external_rtsp_url: externalRtspUrl }),
+            body: JSON.stringify({ jetson_host: jetsonHost, rules, stream_source: streamSource, external_rtsp_url: externalRtspUrl }),
         });
         const data = await res.json();
         if (!res.ok || data.error) {
@@ -237,32 +229,11 @@ export async function testLiveMonitor() {
 
     btn.textContent = 'Stop Test';
     btn.classList.add('btn-danger');
-    statusEl.textContent = 'Connecting to VILA JPS...';
+    statusEl.textContent = 'Starting relay...';
 
-    let lastAlertCount = 0;
+    let lastMsgCount = 0;
 
-    // Poll for snapshot every 1s
-    _testSnapshotPollId = setInterval(async () => {
-        try {
-            const res = await fetch(`/api/${state.selectedRobotId}/test_live_monitor/snapshot`);
-            if (res.ok && res.status !== 204) {
-                const blob = await res.blob();
-                if (blob.size > 0) {
-                    const img = document.getElementById('test-snapshot-img');
-                    const placeholder = document.getElementById('test-snapshot-placeholder');
-                    if (img) {
-                        const oldSrc = img.src;
-                        img.src = URL.createObjectURL(blob);
-                        img.style.display = 'block';
-                        if (oldSrc.startsWith('blob:')) URL.revokeObjectURL(oldSrc);
-                    }
-                    if (placeholder) placeholder.style.display = 'none';
-                }
-            }
-        } catch (e) { /* ignore */ }
-    }, 1000);
-
-    // Poll for status + alerts every 2s
+    // Poll for status + WS messages every 2s
     _testStatusPollId = setInterval(async () => {
         try {
             const res = await fetch(`/api/${state.selectedRobotId}/test_live_monitor/status`);
@@ -270,9 +241,7 @@ export async function testLiveMonitor() {
 
             if (!status.active && _testStatusPollId) {
                 clearInterval(_testStatusPollId);
-                if (_testSnapshotPollId) clearInterval(_testSnapshotPollId);
                 _testStatusPollId = null;
-                _testSnapshotPollId = null;
                 btn.textContent = 'Test Live Monitor';
                 btn.classList.remove('btn-danger');
                 statusEl.textContent = status.error ? 'Error: ' + status.error : 'Stopped';
@@ -280,28 +249,27 @@ export async function testLiveMonitor() {
             }
 
             const wsLabel = status.ws_connected ? 'WS Connected' : 'WS Connecting...';
-            statusEl.textContent = `${wsLabel} | Alerts: ${status.alert_count}`;
+            statusEl.textContent = `${wsLabel} | Messages: ${(status.ws_messages || []).length} | Alerts: ${status.alert_count}`;
             if (status.error) statusEl.textContent += ` | ${status.error}`;
 
-            // Append new alerts
-            const alertsContainer = document.getElementById('test-alerts-container');
-            if (alertsContainer && status.alerts.length > lastAlertCount) {
-                const newAlerts = status.alerts.slice(lastAlertCount);
-                for (const a of newAlerts) {
-                    const imgHtml = a.image
-                        ? `<img src="${a.image}" style="max-width:120px; border-radius:4px; flex-shrink:0;">`
-                        : '';
+            // Append new WS messages
+            const logEl = document.getElementById('test-ws-log');
+            const msgs = status.ws_messages || [];
+            if (logEl && msgs.length > lastMsgCount) {
+                const newMsgs = msgs.slice(lastMsgCount);
+                for (const m of newMsgs) {
                     const div = document.createElement('div');
-                    div.style.cssText = 'margin-bottom:6px; padding:6px 8px; background:rgba(231,76,60,0.08); border-left:3px solid var(--coral); border-radius:4px; display:flex; gap:8px; align-items:flex-start;';
+                    const isAlert = m.event && (m.event.rule_string || m.event.alert || m.event.rule);
+                    div.style.cssText = isAlert
+                        ? 'margin-bottom:4px; padding:4px 8px; background:rgba(231,76,60,0.1); border-left:3px solid var(--coral); border-radius:3px; font-size:12px; font-family:monospace; word-break:break-all;'
+                        : 'margin-bottom:4px; padding:4px 8px; background:var(--bg-secondary); border-left:3px solid var(--border-subtle); border-radius:3px; font-size:12px; font-family:monospace; word-break:break-all;';
+                    const content = m.event ? JSON.stringify(m.event) : (m.raw || '?');
                     div.innerHTML =
-                        imgHtml +
-                        `<div>` +
-                            `<div style="color:var(--coral); font-weight:600; font-size:12px;">${escapeHtml(a.rule)}</div>` +
-                            `<div style="color:var(--text-muted); font-size:11px;">${escapeHtml(a.timestamp)}</div>` +
-                        `</div>`;
-                    alertsContainer.appendChild(div);
+                        `<span style="color:var(--text-muted); margin-right:6px;">${escapeHtml(m.timestamp)}</span>` +
+                        `<span>${escapeHtml(content)}</span>`;
+                    logEl.appendChild(div);
                 }
-                lastAlertCount = status.alerts.length;
+                lastMsgCount = msgs.length;
                 resultsEl.scrollTop = resultsEl.scrollHeight;
             }
         } catch (e) { /* ignore */ }

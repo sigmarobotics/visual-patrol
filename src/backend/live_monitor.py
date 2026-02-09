@@ -413,6 +413,7 @@ class TestLiveMonitor:
     def __init__(self):
         self.is_running = False
         self.alerts = []
+        self.ws_messages = []  # all raw WS messages for debugging
         self.error = None
         self.ws_connected = False
         self._lock = threading.Lock()
@@ -447,6 +448,7 @@ class TestLiveMonitor:
 
         self._config = config
         self.alerts = []
+        self.ws_messages = []
         self.error = None
         self.ws_connected = False
         self._latest_frame = None
@@ -521,6 +523,7 @@ class TestLiveMonitor:
             with self._lock:
                 self.error = f"Relay start failed: {e}"
             logger.error(self.error)
+            self.is_running = False
             return
 
         rtsp_url_for_jps = f"rtsp://{mediamtx_external}{rtsp_path}"
@@ -539,6 +542,7 @@ class TestLiveMonitor:
                 self.error = "Relay stream not available on mediamtx (timeout 20s)"
             logger.error(self.error)
             self._stop_relay()
+            self.is_running = False
             return
 
         # Start snapshot thread now that stream is available on mediamtx
@@ -580,6 +584,8 @@ class TestLiveMonitor:
             with self._lock:
                 self.error = "Failed to register stream with VILA JPS after retries"
             logger.error(self.error)
+            self._stop_relay()
+            self.is_running = False
             return
 
         # 5. Set alert rules
@@ -590,6 +596,8 @@ class TestLiveMonitor:
             with self._lock:
                 self.error = f"Failed to set alert rules: {e}"
             logger.error(self.error)
+            self._stop_relay()
+            self.is_running = False
             return
 
         # 6. Start WebSocket listener
@@ -648,6 +656,7 @@ class TestLiveMonitor:
                 "ws_connected": self.ws_connected,
                 "alert_count": len(self.alerts),
                 "alerts": list(self.alerts),
+                "ws_messages": list(self.ws_messages),
                 "error": self.error,
             }
 
@@ -811,17 +820,25 @@ class TestLiveMonitor:
 
     def _handle_ws_event(self, raw):
         """Process a single WebSocket alert event (no DB writes, memory only)."""
+        timestamp = get_current_time_str()
+
+        # Store every raw WS message for debugging display
         try:
             event = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
+            with self._lock:
+                self.ws_messages.append({"timestamp": timestamp, "raw": raw[:500]})
             logger.debug(f"Non-JSON WS message: {raw[:200]}")
             return
+
+        with self._lock:
+            self.ws_messages.append({"timestamp": timestamp, "event": event})
+            if len(self.ws_messages) > 200:
+                self.ws_messages = self.ws_messages[-200:]
 
         rule_string = event.get("rule_string") or event.get("alert") or event.get("rule", "")
         if not rule_string:
             return
-
-        timestamp = get_current_time_str()
 
         # Attach current snapshot as evidence
         image_b64 = None
