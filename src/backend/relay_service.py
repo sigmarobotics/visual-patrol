@@ -59,9 +59,13 @@ logger.addHandler(stream_handler)
 # --- Relay Entry ---
 
 
+STALL_TIMEOUT = 30  # seconds without new frames before restart
+
+
 class _RelayEntry:
     __slots__ = ("key", "process", "stop_event",
-                 "started_at", "restart_count", "source_url", "rtsp_url")
+                 "started_at", "restart_count", "source_url", "rtsp_url",
+                 "last_frame_count", "last_progress_time")
 
     def __init__(self, key, process, rtsp_url, source_url):
         self.key = key
@@ -71,6 +75,8 @@ class _RelayEntry:
         self.stop_event = threading.Event()
         self.started_at = time.time()
         self.restart_count = 0
+        self.last_frame_count = -1
+        self.last_progress_time = time.time()
 
 
 # --- Relay Manager ---
@@ -174,6 +180,7 @@ class RelayServiceManager:
             cmd = [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "tcp",
+                "-stimeout", "10000000",
                 "-i", source_url,
                 "-an",
                 "-vf", vf,
@@ -187,6 +194,7 @@ class RelayServiceManager:
             cmd = [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "tcp",
+                "-stimeout", "10000000",
                 "-i", source_url,
                 "-an",
                 "-vf", vf,
@@ -211,14 +219,39 @@ class RelayServiceManager:
         except Exception as e:
             return None, str(e)
 
-    @staticmethod
-    def _stderr_reader(proc, key):
-        """Read ffmpeg stderr and log it."""
+    def _stderr_reader(self, proc, key):
+        """Read ffmpeg stderr, log it, and track frame progress for stall detection.
+
+        ffmpeg progress lines use \\r (not \\n), so we read raw bytes and split
+        on both \\r and \\n to capture frame= updates in real time.
+        """
+        import re
+        frame_re = re.compile(r'frame=\s*(\d+)')
+        buf = b""
         try:
-            for line in proc.stderr:
-                line_str = line.decode(errors="ignore").strip() if isinstance(line, bytes) else line.strip()
-                if line_str:
-                    logger.info(f"ffmpeg[{key}]: {line_str}")
+            while True:
+                chunk = proc.stderr.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                # Split on \r or \n to handle ffmpeg progress lines
+                parts = re.split(rb'[\r\n]+', buf)
+                buf = parts[-1]  # Keep incomplete trailing part
+                for part in parts[:-1]:
+                    line_str = part.decode(errors="ignore").strip()
+                    if not line_str:
+                        continue
+                    # Only log non-progress lines (startup info, errors)
+                    if 'frame=' not in line_str:
+                        logger.info(f"ffmpeg[{key}]: {line_str}")
+                    m = frame_re.search(line_str)
+                    if m:
+                        fc = int(m.group(1))
+                        with self._lock:
+                            entry = self._relays.get(key)
+                            if entry and fc > entry.last_frame_count:
+                                entry.last_frame_count = fc
+                                entry.last_progress_time = time.time()
         except Exception:
             pass
 
@@ -239,14 +272,28 @@ class RelayServiceManager:
                 pass
 
     def _monitor_loop(self):
-        """Background thread: check relay health, restart dead processes."""
+        """Background thread: check relay health, restart dead/stalled processes."""
         while True:
             time.sleep(MONITOR_INTERVAL)
             with self._lock:
                 entries = list(self._relays.values())
 
             for entry in entries:
-                if entry.process.poll() is None:
+                alive = entry.process.poll() is None
+                needs_restart = False
+
+                if not alive:
+                    needs_restart = True
+                    reason = "process exited"
+                elif alive and (time.time() - entry.last_progress_time) > STALL_TIMEOUT:
+                    # ffmpeg is alive but no new frames — source RTSP likely dead
+                    stall_secs = int(time.time() - entry.last_progress_time)
+                    reason = f"stalled ({stall_secs}s without new frames)"
+                    logger.warning(f"Relay {entry.key} {reason}, killing ffmpeg")
+                    self._terminate_process(entry.process)
+                    needs_restart = True
+
+                if not needs_restart:
                     continue
 
                 if MAX_RETRIES > 0 and entry.restart_count >= MAX_RETRIES:
@@ -254,7 +301,7 @@ class RelayServiceManager:
                     continue
 
                 delay = min(2 ** entry.restart_count, 30)
-                logger.warning(f"Relay {entry.key} died, restarting in {delay}s (attempt {entry.restart_count + 1})")
+                logger.warning(f"Relay {entry.key} {reason}, restarting in {delay}s (attempt {entry.restart_count + 1})")
                 time.sleep(delay)
 
                 try:
@@ -266,6 +313,8 @@ class RelayServiceManager:
                         entry.process = proc
                         entry.restart_count += 1
                         entry.started_at = time.time()
+                        entry.last_frame_count = -1
+                        entry.last_progress_time = time.time()
 
                     logger.info(f"Relay {entry.key} restarted successfully")
                     entry.restart_count = 0  # reset on success

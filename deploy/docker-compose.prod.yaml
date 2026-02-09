@@ -44,7 +44,7 @@ services:
       - RELAY_SERVICE_PORT=5020
       - MEDIAMTX_HOST=localhost:8555
       - USE_NVENC=false
-      - RELAY_FPS=0.5
+      - RELAY_FPS=2
     restart: unless-stopped
 
   # robot-b:

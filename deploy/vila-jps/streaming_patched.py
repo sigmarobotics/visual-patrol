@@ -47,7 +47,7 @@ class _GstVideoInput:
         self._sink = self._pipeline.get_by_name('mysink')
         self._pipeline.set_state(Gst.State.PLAYING)
 
-    def Capture(self, timeout=1000):
+    def Capture(self, timeout=5000):
         sample = self._sink.try_pull_sample(timeout * Gst.MSECOND)
         if sample is None:
             return None
