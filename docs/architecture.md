@@ -58,15 +58,13 @@ Each robot runs its own Flask process. The backend handles:
 ### RTSP Relay (mediamtx + ffmpeg)
 
 - **mediamtx**: Lightweight RTSP server (`bluenviron/mediamtx` Docker image, port 8555 on Jetson)
-- **ffmpeg**: Managed by `relay_service.py` (Jetson) or `relay_manager.py` (local fallback)
+- **ffmpeg**: Managed by `relay_service.py` (Jetson-side relay service)
 
 Two relay types, both **transcoded** to H264 Baseline profile for NvMMLite hardware decoder compatibility:
-1. **Robot camera relay**: gRPC JPEG frames → ffmpeg `image2pipe` → libx264/NVENC → RTSP push to `/{robot-id}/camera`
+1. **Robot camera relay**: gRPC JPEG frames → HTTP POST to relay service → ffmpeg `image2pipe` → libx264/NVENC → RTSP push to `/{robot-id}/camera`
 2. **External RTSP relay**: Source RTSP → ffmpeg transcode (libx264/NVENC) → RTSP push to `/{robot-id}/external`
 
-Two deployment modes:
-- **Jetson relay service** (`relay_service.py`, port 5020): Standalone Flask app on Jetson managing ffmpeg processes. VP sends frames via HTTP POST. CI-built image at `ghcr.io/sigma-snaken/visual-patrol-relay:latest`.
-- **Local fallback** (`relay_manager.py`): ffmpeg runs as subprocesses in the Flask container. Used when `RELAY_SERVICE_URL` is not set or unreachable.
+The relay service (`relay_service.py`, port 5020) is a standalone Flask app on Jetson managing ffmpeg processes. VP sends robot camera frames via HTTP POST through `RelayServiceClient`. CI-built image at `ghcr.io/sigma-snaken/visual-patrol-relay:latest`. When `RELAY_SERVICE_URL` is not set, relay functionality is unavailable.
 
 VILA JPS pulls these RTSP streams from mediamtx for continuous VLM analysis.
 
@@ -127,10 +125,10 @@ Any backend can serve global requests because they all share the same database.
 
 ```
 1. Patrol starts
-   ├── relay_manager starts relay (Jetson service or local ffmpeg)
-   │   ├── Robot camera: gRPC frames → ffmpeg transcode (5 fps) → mediamtx RTSP
-   │   └── External RTSP: source → ffmpeg transcode (5 fps) → mediamtx RTSP
-   └── Wait for stream ready on mediamtx
+   ├── relay_service_client starts relay on Jetson
+   │   ├── Robot camera: gRPC frames → HTTP POST → relay service → ffmpeg → mediamtx RTSP
+   │   └── External RTSP: relay service → ffmpeg transcode → mediamtx RTSP
+   └── Wait for stream ready on relay service
 
 2. LiveMonitor.start()
    ├── POST /api/v1/live-stream → register each stream → get stream_id
@@ -151,7 +149,7 @@ Any backend can serve global requests because they all share the same database.
    ├── LiveMonitor.stop()
    │   ├── Close WebSocket
    │   └── DELETE /api/v1/live-stream/{id} for each stream
-   ├── relay_manager.stop_all() → SIGTERM ffmpeg processes
+   ├── relay_service_client.stop_all() → stops ffmpeg on relay service
    └── Alerts included in AI summary report
 ```
 
@@ -192,9 +190,8 @@ Each Flask backend runs several background threads:
 | `_schedule_checker` (patrol_service) | Checks for scheduled patrol times | 30s |
 | `_inspection_worker` (patrol_service) | Processes AI inspection queue | Event-driven |
 | `_record_loop` (video_recorder) | Captures video frames during patrol | 1/fps |
-| `_feeder_loop` (relay_manager) | Feeds gRPC JPEG frames to ffmpeg stdin | 200ms (5 fps) |
-| `_monitor_loop` (relay_manager) | Checks relay health, restarts dead ffmpeg | 10s |
-| `_ws_listener` (live_monitor) | Listens for VILA JPS WebSocket alert events | Continuous |
+| `_feeder_loop` (relay_manager) | Feeds gRPC JPEG frames to relay service via HTTP POST | 2s (0.5 fps) |
+| `_ws_listener` (edge_ai_service) | Listens for VILA JPS WebSocket alert events | Continuous |
 
 ## Networking Modes
 
@@ -207,8 +204,7 @@ Uses Docker bridge networking:
 - All Flask backends listen on port 5000 internally
 - nginx resolves backend hostnames via Docker DNS (`resolver 127.0.0.11`)
 - Docker service names must match `ROBOT_ID` values (e.g., service `robot-a` = `ROBOT_ID=robot-a`)
-- `MEDIAMTX_INTERNAL=mediamtx:8554` (ffmpeg inside container pushes via Docker DNS)
-- `MEDIAMTX_EXTERNAL=localhost:8554` (VILA JPS on host pulls from localhost)
+- `RELAY_SERVICE_URL` points to the Jetson relay service (e.g., `http://192.168.50.35:5020`)
 
 ### Production (Jetson / Linux host)
 
@@ -219,7 +215,7 @@ Uses host networking (`network_mode: host`):
 - Each Flask backend uses a unique port via `PORT` env var (5001, 5002, ...)
 - mediamtx RTSP port configurable via `MTX_RTSPADDRESS` (default 8554, use 8555 if port conflicts)
 - nginx routes by robot ID using explicit proxy rules to `127.0.0.1:PORT`
-- `MEDIAMTX_INTERNAL=localhost:8555` and `MEDIAMTX_EXTERNAL=localhost:8555` (all on host network)
+- `RELAY_SERVICE_URL=http://localhost:5020` (relay service on same Jetson host)
 
 See [deployment.md](deployment.md) for details.
 

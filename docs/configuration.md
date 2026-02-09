@@ -20,19 +20,9 @@ Set per-service in `docker-compose.yml` (dev) or `deploy/docker-compose.prod.yam
 | `LOG_DIR` | `{project}/logs` | Base directory for log files |
 | `PORT` | `5000` | Flask HTTP listen port (must be unique per robot in prod) |
 | `TZ` | (system default) | System timezone for Docker container |
-| `MEDIAMTX_INTERNAL` | `"localhost:8554"` | mediamtx host:port for ffmpeg to push to (from inside the container) |
-| `MEDIAMTX_EXTERNAL` | `"localhost:8554"` | mediamtx host:port for VILA JPS to pull from (from outside the container) |
+| `RELAY_SERVICE_URL` | `""` | Jetson relay service URL (empty = relay not available) |
 
 **Important:** `ROBOT_ID` must follow the pattern `robot-{name}` (e.g., `robot-a`, `robot-b`). In dev mode, the Docker service name must match the `ROBOT_ID` because nginx resolves backends by service name.
-
-### mediamtx Address Configuration
-
-mediamtx is deployed externally as part of the VILA JPS stack (not included in visual-patrol's docker-compose files). The two `MEDIAMTX_*` variables exist because ffmpeg (inside the Flask container) and VILA JPS (external) may use different addresses to reach mediamtx:
-
-| Mode | `MEDIAMTX_INTERNAL` | `MEDIAMTX_EXTERNAL` | Reason |
-|------|---------------------|---------------------|--------|
-| Dev (bridge) | `mediamtx:8554` | `localhost:8554` | ffmpeg uses Docker DNS; VILA JPS accesses localhost port mapping |
-| Prod (host) | `localhost:8555` | `localhost:8555` | All on host network, same address |
 
 ### Example (Dev)
 
@@ -44,8 +34,7 @@ environment:
   - ROBOT_ID=robot-a
   - ROBOT_NAME=Robot A
   - ROBOT_IP=192.168.50.133:26400
-  - MEDIAMTX_INTERNAL=mediamtx:8554
-  - MEDIAMTX_EXTERNAL=localhost:8554
+  - RELAY_SERVICE_URL=http://192.168.50.35:5020
 ```
 
 ### Example (Prod)
@@ -59,8 +48,7 @@ environment:
   - ROBOT_ID=robot-a
   - ROBOT_NAME=Robot A
   - ROBOT_IP=192.168.50.133:26400
-  - MEDIAMTX_INTERNAL=localhost:8555
-  - MEDIAMTX_EXTERNAL=localhost:8555
+  - RELAY_SERVICE_URL=http://localhost:5020
 ```
 
 ## Global Settings (Web UI)

@@ -39,7 +39,7 @@ Open [http://localhost:5000](http://localhost:5000).
 - nginx resolves service names via Docker's internal DNS (`resolver 127.0.0.11`)
 - Docker service names **must** match `ROBOT_ID` values (e.g., service `robot-a` = env `ROBOT_ID=robot-a`)
 - All services mount `./src` for live code reloading and `./data` + `./logs` for persistent storage
-- mediamtx runs externally (deployed with VILA JPS stack); `MEDIAMTX_INTERNAL` / `MEDIAMTX_EXTERNAL` env vars point robot services to it
+- RTSP relay runs on Jetson; `RELAY_SERVICE_URL` env var points robot services to it
 
 ### Adding a Robot (Dev)
 
@@ -60,8 +60,7 @@ Open [http://localhost:5000](http://localhost:5000).
       - ROBOT_ID=robot-d
       - ROBOT_NAME=Robot D
       - ROBOT_IP=192.168.50.135:26400
-      - MEDIAMTX_INTERNAL=mediamtx:8554
-      - MEDIAMTX_EXTERNAL=localhost:8554
+      - RELAY_SERVICE_URL=http://192.168.50.35:5020
     restart: unless-stopped
 ```
 
@@ -128,7 +127,7 @@ The `data/` and `logs/` directories are created automatically on first start.
 - Each Flask backend listens on a unique port via `PORT` env var (5001, 5002, ...)
 - nginx routes by matching robot IDs in the URL to specific ports
 - Images are pulled from `ghcr.io/sigma-snaken/visual-patrol:latest`
-- All services use `MEDIAMTX_INTERNAL` and `MEDIAMTX_EXTERNAL` pointing to `localhost:{port}`
+- All services use `RELAY_SERVICE_URL=http://localhost:5020` (relay service on same host)
 
 ### mediamtx (External Dependency)
 
@@ -142,9 +141,9 @@ cd /code/mediamtx && docker compose up -d
 docker compose -f /code/mediamtx/compose.yaml ps
 ```
 
-Visual Patrol connects to mediamtx via the `MEDIAMTX_INTERNAL` and `MEDIAMTX_EXTERNAL` environment variables on each robot service. Ensure mediamtx is running and reachable at the configured addresses before enabling live monitoring.
+Visual Patrol connects to the relay service via the `RELAY_SERVICE_URL` environment variable on each robot service. The relay service manages ffmpeg processes that push to mediamtx. Ensure both mediamtx and the relay service are running before enabling live monitoring.
 
-**Port conflicts:** If the default RTSP port (8554) is already in use (e.g., by VILA JPS VST), configure mediamtx on another port like `8555` and update `MEDIAMTX_INTERNAL`/`MEDIAMTX_EXTERNAL` on all robot services to match.
+**Port conflicts:** If the default RTSP port (8554) is already in use (e.g., by VILA JPS VST), configure mediamtx on another port like `8555` and update `MEDIAMTX_HOST` on the relay service to match.
 
 ### RTSP Relay Service (Jetson)
 
@@ -201,7 +200,7 @@ Or use the prod compose file which includes the `rtsp-relay` service.
 - Production (Jetson, host networking): `RELAY_SERVICE_URL=http://localhost:5020`
 - Development (WSL2, bridge networking): `RELAY_SERVICE_URL=http://192.168.50.35:5020` (Jetson IP)
 
-When `RELAY_SERVICE_URL` is not set or the service is unreachable, VP falls back to local ffmpeg (software encoding in the Flask container).
+When `RELAY_SERVICE_URL` is not set, relay functionality is unavailable and live monitoring cannot start.
 
 **Verify:**
 
@@ -270,8 +269,7 @@ See [Relay Service Setup](../deploy/relay-service/JETSON_SETUP.md) for full deta
       - ROBOT_ID=robot-b
       - ROBOT_NAME=Robot B
       - ROBOT_IP=192.168.50.134:26400
-      - MEDIAMTX_INTERNAL=localhost:8555
-      - MEDIAMTX_EXTERNAL=localhost:8555
+      - RELAY_SERVICE_URL=http://localhost:5020
     restart: unless-stopped
 ```
 
@@ -397,8 +395,7 @@ docker build -t visual-patrol .
 | nginx port | `ports: 5000:5000` | Listens on host:5000 |
 | Flask ports | All internal 5000 | Unique per robot (5001, 5002...) |
 | Service discovery | Docker DNS | Explicit `127.0.0.1:PORT` |
-| `MEDIAMTX_INTERNAL` | `mediamtx:8554` (Docker DNS) | `localhost:8555` |
-| `MEDIAMTX_EXTERNAL` | `localhost:8554` (host port) | `localhost:8555` |
+| `RELAY_SERVICE_URL` | `http://192.168.50.35:5020` (Jetson IP) | `http://localhost:5020` |
 | Adding a robot | Add service only | Add service + nginx `if` block |
 | Frontend serving | nginx serves `/app/frontend` | Flask serves (proxied through nginx) |
 | Why | Docker Desktop + WSL2 breaks `network_mode: host` | Jetson `iptables: false` breaks bridge |
@@ -427,10 +424,10 @@ healthcheck:
 | Camera stream not loading | Enable "Continuous Camera Stream" in Settings; verify robot connection |
 | Map not loading | Robot may still be connecting; check container logs for gRPC errors |
 | Port conflict (prod) | Ensure each robot has a unique `PORT` value |
-| mediamtx port conflict | Change `MTX_RTSPADDRESS` and update `MEDIAMTX_*` env vars to match |
+| mediamtx port conflict | Change `MTX_RTSPADDRESS` and update `MEDIAMTX_HOST` on relay service to match |
 | Live monitor not working | Check `logs/{robot-id}_edge_ai_service.log`; verify VILA JPS is running (`/api/edge_ai/health`) |
 | ffmpeg relay crashing | Check `logs/{robot-id}_relay_manager.log`; verify mediamtx is running |
-| Relay service unreachable | Check `RELAY_SERVICE_URL` env var; verify relay service is running: `curl http://localhost:5020/health`; VP falls back to local ffmpeg automatically |
+| Relay service unreachable | Check `RELAY_SERVICE_URL` env var; verify relay service is running: `curl http://localhost:5020/health` |
 | NVENC encoder not working | Check `USE_NVENC` env var; verify `--runtime=nvidia`; check relay service logs for encoder errors; set `USE_NVENC=false` to fallback to libx264 |
 | Permission denied on data/logs | The entrypoint script runs `chown` automatically; check if `gosu` is installed |
 | Stale robot entries in DB | Can happen if `ROBOT_ID` env var is missing (defaults to `"default"`) |

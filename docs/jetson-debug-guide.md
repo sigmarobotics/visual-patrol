@@ -50,21 +50,22 @@ All source files are in the visual-patrol repo at `src/backend/`:
 
 | File | Purpose | Key Details |
 |------|---------|-------------|
-| `src/backend/relay_manager.py` | ffmpeg subprocess management | `RelayManager` singleton; robot camera relay (gRPC→H.264→RTSP) and external RTSP relay (copy codec); auto-restart with exponential backoff (max 3 retries, 10s monitor interval) |
+| `src/backend/relay_manager.py` | Relay service client | `RelayServiceClient` HTTP client for Jetson relay service; `FrameFeederThread` for robot camera frames; `relay_service_client` module-level instance (None if `RELAY_SERVICE_URL` not set) |
 | `src/backend/edge_ai_service.py` | VILA JPS lifecycle | `LiveMonitor` class: stream register → alert rules → WebSocket → deregister; `_cleanup_stale_streams()` on start; 60s alert cooldown; evidence capture + DB save + Telegram |
 | `src/backend/patrol_service.py` | Patrol orchestration | Lines ~348-455: starts relay → sleeps 3s → starts live_monitor; `finally` block stops live_monitor then relay_manager |
-| `src/backend/config.py` | Environment config | `MEDIAMTX_INTERNAL` (ffmpeg push target), `MEDIAMTX_EXTERNAL` (VILA pull source), both default `localhost:8554` |
+| `src/backend/config.py` | Environment config | `RELAY_SERVICE_URL` (Jetson relay service URL), `JETSON_JPS_API_PORT` (5010), `JETSON_MEDIAMTX_PORT` (8555) |
 | `src/backend/app.py` | Flask API endpoints | `/api/relay/status`, `/api/relay/test`, `/api/edge_ai/health` |
 
 ## Data Flow
 
 ```
 Robot Camera (Kachaka gRPC)
-  → relay_manager.py: feeder thread at 5fps → ffmpeg (image2pipe → libx264)
-    → RTSP push to rtsp://localhost:8555/{robot-id}/camera
+  → relay_manager.py: FrameFeederThread at 0.5fps → HTTP POST to relay_service
+    → relay_service.py: ffmpeg (image2pipe → libx264)
+      → RTSP push to rtsp://localhost:8555/{robot-id}/camera
 
 External RTSP Camera
-  → relay_manager.py: ffmpeg (copy codec, -an)
+  → relay_service.py: ffmpeg transcode (libx264)
     → RTSP push to rtsp://localhost:8555/{robot-id}/external
 
 mediamtx (port 8555)
@@ -171,9 +172,12 @@ docker ps | grep mediamtx
 # Check mediamtx is listening on 8555
 ss -tlnp | grep 8555
 
+# Check relay service is reachable
+curl -s http://localhost:5020/health
+
 # Check env vars on robot-a container
-docker exec visual_patrol_robot_a env | grep MEDIAMTX
-# Expected: MEDIAMTX_INTERNAL=localhost:8555, MEDIAMTX_EXTERNAL=localhost:8555
+docker exec visual_patrol_robot_a env | grep RELAY
+# Expected: RELAY_SERVICE_URL=http://localhost:5020
 ```
 
 ### WebSocket never connects
@@ -231,10 +235,9 @@ These are set in `docker-compose.prod.yaml` on each robot service:
 
 | Variable | Jetson Value | Purpose |
 |----------|-------------|---------|
-| `MEDIAMTX_INTERNAL` | `localhost:8555` | Where ffmpeg pushes RTSP (inside container → mediamtx) |
-| `MEDIAMTX_EXTERNAL` | `localhost:8555` | Where VILA JPS pulls RTSP (mediamtx address from JPS perspective) |
+| `RELAY_SERVICE_URL` | `http://localhost:5020` | Jetson relay service URL (manages ffmpeg → mediamtx) |
 
-Since Jetson uses host networking, both are `localhost:8555`. The port must match mediamtx's `MTX_RTSPADDRESS` configuration.
+Since Jetson uses host networking, the relay service is at `localhost:5020`. The relay service's `MEDIAMTX_HOST` must match mediamtx's `MTX_RTSPADDRESS` configuration.
 
 ## VILA JPS API Quick Reference
 

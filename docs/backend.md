@@ -29,7 +29,7 @@ src/backend/
 Services are instantiated as module-level singletons. Import order matters because services read settings from the database at module load time.
 
 ```
-config.py           -- Loaded first (env vars, paths, mediamtx config)
+config.py           -- Loaded first (env vars, paths)
     |
 database.py         -- Schema init (init_db called before service imports)
     |
@@ -37,13 +37,13 @@ settings_service.py -- Reads global_settings table
     |
 robot_service.py    -- Connects to Kachaka (reads ROBOT_IP from env)
 cloud_ai_service.py       -- Configures Gemini client (reads API key from settings)
-relay_manager.py    -- Manages ffmpeg subprocesses (singleton, starts monitor thread)
-patrol_service.py   -- Imports robot_service, ai_service, relay_manager, live_monitor
+relay_manager.py    -- Relay service client (HTTP client to Jetson relay service)
+patrol_service.py   -- Imports robot_service, cloud_ai_service, relay_manager, edge_ai_service
 edge_ai_service.py     -- Used by patrol_service (VILA JPS API + WebSocket)
 pdf_service.py      -- Reads from database for report data
 video_recorder.py   -- Used by patrol_service
 utils.py            -- Used by patrol_service, app.py
-logger.py           -- Used by ai_service, patrol_service, video_recorder, relay_manager, live_monitor
+logger.py           -- Used by cloud_ai_service, patrol_service, video_recorder, relay_manager, edge_ai_service
 ```
 
 ## Modules
@@ -63,8 +63,7 @@ Reads environment variables and defines filesystem paths.
 | `LOG_DIR` | `{project}/logs` | Log file directory |
 | `PORT` | `5000` | Flask listen port |
 | `TZ` | (system) | System timezone (Docker) |
-| `MEDIAMTX_INTERNAL` | `"localhost:8554"` | mediamtx address for ffmpeg to push to (inside container) |
-| `MEDIAMTX_EXTERNAL` | `"localhost:8554"` | mediamtx address for VILA JPS to pull from (outside container) |
+| `RELAY_SERVICE_URL` | `""` | Jetson relay service URL (empty = relay not available) |
 
 **Derived Paths:**
 
@@ -261,27 +260,28 @@ class InspectionResult(BaseModel):
 
 ### `relay_manager.py`
 
-Manages ffmpeg subprocesses pushing camera streams to mediamtx RTSP server.
+HTTP client for the Jetson-side relay service, plus a frame feeder thread for robot camera relay.
 
-**Singleton:** `relay_manager = RelayManager()`
+**Module-level:** `relay_service_client = RelayServiceClient(URL) if RELAY_SERVICE_URL else None`
 
-**Key methods:**
+**Classes:**
+
+- **`RelayServiceClient`** — HTTP client for the Jetson relay service REST API
 
 | Method | Description |
 |--------|-------------|
-| `start_robot_camera_relay(robot_id, frame_func, mediamtx_internal)` | Start gRPC JPEG → ffmpeg → RTSP relay |
-| `start_external_rtsp_relay(robot_id, source_url, mediamtx_internal)` | Start RTSP → RTSP copy relay |
-| `stop_relay(key)` | Stop a specific relay by key |
+| `start_relay(key, relay_type, source_url)` | Start a relay on the service |
+| `stop_relay(key)` | Stop a specific relay |
 | `stop_all()` | Stop all active relays |
-| `get_status()` | Return `{key: {type, running, uptime, restart_count}}` |
+| `feed_frame(key, jpeg_bytes)` | POST a JPEG frame to the relay service |
+| `wait_for_stream(key, timeout)` | Wait for stream readiness on the relay service |
+| `start_frame_feeder(key, frame_func, interval)` | Start a `FrameFeederThread` for robot camera |
+| `stop_frame_feeder(key)` | Stop a frame feeder thread |
+| `get_status()` | Get status of all relays from the service |
 
-**Robot camera relay:** Spawns ffmpeg with `image2pipe` input, `libx264 ultrafast` encoding, and RTSP TCP output. A feeder daemon thread calls `frame_func()` every 200ms (5 fps) and writes JPEG bytes to ffmpeg's stdin.
+- **`FrameFeederThread`** — Background thread that grabs gRPC JPEG frames and POSTs them to the relay service at configurable interval (default 0.5 fps)
 
-**External RTSP relay:** Spawns ffmpeg with RTSP TCP input, transcodes to H264 Baseline at 5 fps (matching robot camera), no audio (`-an`), and RTSP TCP output.
-
-**Auto-restart:** A background monitor thread checks every 10 seconds. Dead ffmpeg processes are restarted with exponential backoff (up to 3 retries).
-
-**Cleanup:** `atexit.register(stop_all)` ensures ffmpeg processes are terminated on shutdown. `stop_relay()` uses SIGTERM → 5s wait → SIGKILL.
+When `RELAY_SERVICE_URL` is not set, `relay_service_client` is `None` and relay functionality is unavailable.
 
 ### `patrol_service.py`
 
