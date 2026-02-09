@@ -17,6 +17,7 @@ import requests
 from utils import load_json, save_json, get_current_time_str, get_filename_timestamp
 from database import get_db_connection, db_context, update_run_tokens
 from robot_service import robot_service
+from frame_hub import frame_hub
 from cloud_ai_service import ai_service, parse_ai_response
 from pdf_service import generate_patrol_report
 from logger import get_logger
@@ -291,6 +292,7 @@ class PatrolService:
 
     def _patrol_logic(self):
         self._set_status("Starting...")
+        frame_hub.set_patrol_active(True)
         points = load_json(POINTS_FILE, [])
         settings = settings_service.get_all()
 
@@ -343,7 +345,7 @@ class PatrolService:
             video_filename = os.path.join(video_dir, f"{self.current_run_id}_{get_filename_timestamp()}.mp4") # Use mp4 as tested
             
             self._set_status("Starting Video Recording...")
-            recorder = VideoRecorder(video_filename, robot_service.get_front_camera_image)
+            recorder = VideoRecorder(video_filename, frame_hub.get_latest_frame)
             recorder.start()
 
         # Edge AI setup (VILA JPS API + RTSP relay)
@@ -372,15 +374,20 @@ class PatrolService:
                 else:
                     try:
                         key = f"{ROBOT_ID}/camera"
-                        rtsp_path, err = relay_service_client.start_relay(key, "robot_camera")
+                        # 1. Push raw stream from frame cache to Jetson mediamtx
+                        raw_path = f"/raw/{ROBOT_ID}/camera"
+                        frame_hub.start_rtsp_push(
+                            f"{jetson_host}:{JETSON_MEDIAMTX_PORT}", raw_path)
+                        # 2. Tell Jetson relay to read from raw path and transcode
+                        source_url = f"rtsp://localhost:{JETSON_MEDIAMTX_PORT}{raw_path}"
+                        rtsp_path, err = relay_service_client.start_relay(key, source_url)
                         if err:
                             raise RuntimeError(err)
-                        relay_service_client.start_frame_feeder(key, robot_service.get_front_camera_image)
                         streams.append({
                             "rtsp_url": f"rtsp://{mediamtx_for_jps}{rtsp_path}",
                             "name": f"{ROBOT_NAME} Camera",
                             "type": "robot_camera",
-                            "evidence_func": robot_service.get_front_camera_image,
+                            "evidence_func": frame_hub.get_latest_frame,
                         })
                     except Exception as e:
                         logger.error(f"Failed to start robot camera relay: {e}")
@@ -392,7 +399,7 @@ class PatrolService:
                 else:
                     try:
                         key = f"{ROBOT_ID}/external"
-                        rtsp_path, err = relay_service_client.start_relay(key, "external_rtsp", source_url=ext_url)
+                        rtsp_path, err = relay_service_client.start_relay(key, ext_url)
                         if err:
                             raise RuntimeError(err)
                         streams.append({
@@ -408,7 +415,7 @@ class PatrolService:
                 verified = []
                 for s in streams:
                     s_key = s["rtsp_url"].split(mediamtx_for_jps)[-1].lstrip("/")
-                    ready = relay_service_client.wait_for_stream(s_key, timeout=15)
+                    ready = relay_service_client.wait_for_stream(s_key, timeout=30)
                     if ready:
                         verified.append(s)
                     else:
@@ -473,6 +480,11 @@ class PatrolService:
                     edge_ai_monitor.stop()
                 except Exception as e:
                     logger.error(f"Error stopping edge AI monitor: {e}")
+            # Stop ffmpeg push before stopping relays
+            try:
+                frame_hub.stop_rtsp_push()
+            except Exception as e:
+                logger.error(f"Error stopping RTSP push: {e}")
             # Ensure RTSP relays are always stopped
             try:
                 if relay_service_client:
@@ -485,6 +497,8 @@ class PatrolService:
                     recorder.stop()
                 except Exception as e:
                     logger.error(f"Error stopping video recorder: {e}")
+            # Re-evaluate polling (may stop if idle + enable_idle_stream=false)
+            frame_hub.set_patrol_active(False)
 
         # Finalize patrol
         with self.patrol_lock:
@@ -593,7 +607,7 @@ class PatrolService:
     def _inspect_point(self, point, point_name, run_images_dir, settings, turbo_mode, inspections_data):
         """Capture image and run AI inspection."""
         try:
-            img_response = robot_service.get_front_camera_image()
+            img_response = frame_hub.get_latest_frame()
             if not img_response:
                 return
 

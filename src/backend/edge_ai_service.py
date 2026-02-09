@@ -438,7 +438,6 @@ class TestLiveMonitor:
                 stream_source: str - "robot_camera" or "external_rtsp"
                 external_rtsp_url: str - external RTSP URL (if stream_source == "external_rtsp")
                 robot_id: str - robot identifier
-                frame_func: callable - returns gRPC image (for robot_camera relay)
                 mediamtx_internal: str - mediamtx host:port (ffmpeg push target)
                 mediamtx_external: str - mediamtx host:port (VILA pull source)
         """
@@ -464,7 +463,8 @@ class TestLiveMonitor:
                 self.error = "External RTSP URL not configured"
                 return
         else:
-            if not config.get("frame_func"):
+            from frame_hub import frame_hub
+            if frame_hub.get_latest_frame() is None:
                 self.error = "Robot camera not available"
                 return
 
@@ -489,6 +489,8 @@ class TestLiveMonitor:
 
         # 1. Start relay (ffmpeg → mediamtx) via Jetson relay service
         from relay_manager import relay_service_client
+        from frame_hub import frame_hub
+        from config import JETSON_MEDIAMTX_PORT
 
         try:
             if not relay_service_client:
@@ -497,16 +499,20 @@ class TestLiveMonitor:
             if stream_source == "external_rtsp":
                 ext_url = config.get("external_rtsp_url", "")
                 self._relay_key = f"{robot_id}/external"
-                rtsp_path, err = relay_service_client.start_relay(self._relay_key, "external_rtsp", source_url=ext_url)
+                rtsp_path, err = relay_service_client.start_relay(self._relay_key, ext_url)
                 if err:
                     raise RuntimeError(err)
             else:
-                frame_func = config.get("frame_func")
                 self._relay_key = f"{robot_id}/camera"
-                rtsp_path, err = relay_service_client.start_relay(self._relay_key, "robot_camera")
+                # 1a. Push raw stream from frame cache to Jetson mediamtx
+                raw_path = f"/raw/{robot_id}/camera"
+                target_mtx = mediamtx_internal  # jetson_host:8555
+                frame_hub.start_rtsp_push(target_mtx, raw_path)
+                # 1b. Tell relay to read from raw path and transcode
+                source_url = f"rtsp://localhost:{JETSON_MEDIAMTX_PORT}{raw_path}"
+                rtsp_path, err = relay_service_client.start_relay(self._relay_key, source_url)
                 if err:
                     raise RuntimeError(err)
-                relay_service_client.start_frame_feeder(self._relay_key, frame_func)
         except Exception as e:
             with self._lock:
                 self.error = f"Relay start failed: {e}"
@@ -653,11 +659,15 @@ class TestLiveMonitor:
 
     def _stop_relay(self):
         """Stop only the relay started by this test."""
+        from frame_hub import frame_hub
+        from relay_manager import relay_service_client
+        try:
+            frame_hub.stop_rtsp_push()
+        except Exception as e:
+            logger.warning(f"RTSP push stop failed: {e}")
         if self._relay_key:
             try:
-                from relay_manager import relay_service_client
                 if relay_service_client:
-                    relay_service_client.stop_frame_feeder(self._relay_key)
                     relay_service_client.stop_relay(self._relay_key)
             except Exception as e:
                 logger.warning(f"Relay stop failed: {e}")

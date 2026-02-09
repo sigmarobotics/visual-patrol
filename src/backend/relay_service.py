@@ -2,11 +2,10 @@
 Relay Service - Standalone Flask app managing ffmpeg relay processes on Jetson.
 
 Runs on Jetson alongside mediamtx and JPS. Provides REST API for VP Flask
-backends to start/stop relays and feed robot camera frames over HTTP.
+backends to start/stop RTSP relays.
 
-Two relay types:
-1. robot_camera: JPEG frames via POST /frame → ffmpeg NVENC → mediamtx RTSP
-2. external_rtsp: Source RTSP URL → ffmpeg copy → mediamtx RTSP
+Unified relay type: RTSP input → transcode H264 Baseline → mediamtx RTSP output.
+Input can be from frame_hub ffmpeg push (/raw/...) or external RTSP cameras.
 
 Env vars:
     RELAY_SERVICE_PORT: Listen port (default 5020)
@@ -37,8 +36,6 @@ LOG_DIR = os.getenv("LOG_DIR", "./logs")
 
 MAX_RETRIES = 0  # 0 = unlimited retries
 MONITOR_INTERVAL = 10
-FEEDER_FPS = 0.5  # 1 frame per 2s (Jetson processes ~1.5s/frame)
-FEEDER_INTERVAL = 1.0 / FEEDER_FPS
 
 # --- Logging ---
 
@@ -61,23 +58,17 @@ logger.addHandler(stream_handler)
 
 
 class _RelayEntry:
-    __slots__ = ("key", "relay_type", "process", "feeder_thread", "stop_event",
-                 "started_at", "restart_count", "source_url", "rtsp_url",
-                 "frame_buffer", "frame_lock")
+    __slots__ = ("key", "process", "stop_event",
+                 "started_at", "restart_count", "source_url", "rtsp_url")
 
-    def __init__(self, key, relay_type, process, rtsp_url, source_url=None):
+    def __init__(self, key, process, rtsp_url, source_url):
         self.key = key
-        self.relay_type = relay_type
         self.process = process
         self.rtsp_url = rtsp_url
         self.source_url = source_url
-        self.feeder_thread = None
         self.stop_event = threading.Event()
         self.started_at = time.time()
         self.restart_count = 0
-        # Frame buffer for robot_camera type
-        self.frame_buffer = None
-        self.frame_lock = threading.Lock()
 
 
 # --- Relay Manager ---
@@ -93,8 +84,19 @@ class RelayServiceManager:
         self._monitor_thread.start()
         atexit.register(self.stop_all)
 
-    def start_relay(self, key, relay_type, source_url=None, mediamtx_url=None):
-        """Start a relay. Returns (rtsp_path, error_msg)."""
+    def start_relay(self, key, source_url, mediamtx_url=None):
+        """Start a relay. Unified: RTSP input -> transcode -> mediamtx output.
+
+        Args:
+            key: Relay key / mediamtx output path (e.g., "robot-a/camera")
+            source_url: RTSP input URL. Can be:
+                - rtsp://localhost:8555/raw/robot-a/camera  (from frame_hub push)
+                - rtsp://admin:pass@192.168.50.45:554/live  (external camera)
+            mediamtx_url: Override mediamtx host:port (default MEDIAMTX_HOST)
+
+        Returns:
+            (rtsp_path, error_msg)
+        """
         rtsp_path = f"/{key}"
         target_host = mediamtx_url or MEDIAMTX_HOST
         rtsp_url = f"rtsp://{target_host}{rtsp_path}"
@@ -104,46 +106,21 @@ class RelayServiceManager:
                 logger.info(f"Relay already running: {key}")
                 return rtsp_path, None
 
-        if relay_type == "robot_camera":
-            proc, err = self._start_robot_camera(key, rtsp_url)
-        elif relay_type == "external_rtsp":
-            if not source_url:
-                return None, "source_url required for external_rtsp"
-            proc, err = self._start_external_rtsp(key, source_url, rtsp_url)
-        else:
-            return None, f"Unknown relay type: {relay_type}"
+        if not source_url:
+            return None, "source_url is required"
 
+        proc, err = self._start_rtsp_transcode(key, source_url, rtsp_url)
         if err:
             return None, err
 
-        entry = _RelayEntry(key, relay_type, proc, rtsp_url, source_url)
-
-        if relay_type == "robot_camera":
-            entry.feeder_thread = threading.Thread(
-                target=self._feeder_loop, args=(entry,), daemon=True)
-            entry.feeder_thread.start()
-
+        entry = _RelayEntry(key, proc, rtsp_url, source_url)
         threading.Thread(target=self._stderr_reader, args=(proc, key), daemon=True).start()
 
         with self._lock:
             self._relays[key] = entry
 
-        logger.info(f"Relay started: {key} ({relay_type}) -> {rtsp_url}")
+        logger.info(f"Relay started: {key} ({source_url}) -> {rtsp_url}")
         return rtsp_path, None
-
-    def feed_frame(self, key, jpeg_bytes):
-        """Feed a JPEG frame to a robot_camera relay."""
-        with self._lock:
-            entry = self._relays.get(key)
-
-        if not entry:
-            return False, "Relay not found"
-        if entry.relay_type != "robot_camera":
-            return False, "Not a robot_camera relay"
-
-        with entry.frame_lock:
-            entry.frame_buffer = jpeg_bytes
-        return True, None
 
     def stop_relay(self, key):
         """Stop a specific relay."""
@@ -155,9 +132,6 @@ class RelayServiceManager:
         logger.info(f"Stopping relay: {key}")
         entry.stop_event.set()
         self._terminate_process(entry.process)
-
-        if entry.feeder_thread and entry.feeder_thread.is_alive():
-            entry.feeder_thread.join(timeout=3)
 
     def stop_all(self):
         """Stop all active relays."""
@@ -174,7 +148,6 @@ class RelayServiceManager:
                 running = entry.process.poll() is None
                 uptime = time.time() - entry.started_at if running else 0
                 result[key] = {
-                    "type": entry.relay_type,
                     "running": running,
                     "uptime": round(uptime, 1),
                     "restart_count": entry.restart_count,
@@ -192,47 +165,8 @@ class RelayServiceManager:
 
     # --- Internal ---
 
-    def _start_robot_camera(self, key, rtsp_url):
-        """Start ffmpeg for robot camera relay (JPEG stdin → RTSP)."""
-        if USE_NVENC:
-            cmd = [
-                "ffmpeg", "-y",
-                "-f", "image2pipe", "-framerate", str(FEEDER_FPS), "-i", "pipe:0",
-                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
-                "-c:v", "h264_nvmpi",
-                "-b:v", "2M",
-                "-pix_fmt", "yuv420p",
-                "-f", "rtsp", "-rtsp_transport", "tcp",
-                rtsp_url,
-            ]
-        else:
-            cmd = [
-                "ffmpeg", "-y",
-                "-f", "image2pipe", "-framerate", str(FEEDER_FPS), "-i", "pipe:0",
-                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
-                "-c:v", "libx264",
-                "-preset", "ultrafast", "-tune", "zerolatency",
-                "-profile:v", "baseline", "-level", "3.1",
-                "-pix_fmt", "yuv420p",
-                "-x264-params", "keyint=1:min-keyint=1:repeat-headers=1",
-                "-bsf:v", "dump_extra",
-                "-f", "rtsp", "-rtsp_transport", "tcp",
-                rtsp_url,
-            ]
-
-        logger.info(f"Starting robot camera ffmpeg: {key} (nvenc={USE_NVENC})")
-        try:
-            proc = subprocess.Popen(
-                cmd, stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                bufsize=0,
-            )
-            return proc, None
-        except Exception as e:
-            return None, str(e)
-
-    def _start_external_rtsp(self, key, source_url, rtsp_url):
-        """Start ffmpeg for external RTSP relay (transcode to clean H264)."""
+    def _start_rtsp_transcode(self, key, source_url, rtsp_url):
+        """ffmpeg: RTSP input -> transcode H264 Baseline 0.5fps -> RTSP output."""
         if USE_NVENC:
             cmd = [
                 "ffmpeg", "-y",
@@ -263,7 +197,7 @@ class RelayServiceManager:
                 rtsp_url,
             ]
 
-        logger.info(f"Starting external RTSP ffmpeg: {key}")
+        logger.info(f"Starting RTSP transcode: {key} (nvenc={USE_NVENC})")
         try:
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL,
@@ -273,31 +207,6 @@ class RelayServiceManager:
             return proc, None
         except Exception as e:
             return None, str(e)
-
-    def _feeder_loop(self, entry):
-        """Feed latest JPEG frame from buffer to ffmpeg stdin at configured FPS."""
-        while not entry.stop_event.is_set():
-            try:
-                if entry.process.poll() is not None:
-                    break
-
-                with entry.frame_lock:
-                    frame = entry.frame_buffer
-
-                if frame:
-                    entry.process.stdin.write(frame)
-                    entry.process.stdin.flush()
-            except (BrokenPipeError, OSError):
-                break
-            except Exception as e:
-                logger.debug(f"Feeder error for {entry.key}: {e}")
-
-            entry.stop_event.wait(FEEDER_INTERVAL)
-
-        try:
-            entry.process.stdin.close()
-        except Exception:
-            pass
 
     @staticmethod
     def _stderr_reader(proc, key):
@@ -346,28 +255,14 @@ class RelayServiceManager:
                 time.sleep(delay)
 
                 try:
-                    if entry.relay_type == "robot_camera":
-                        proc, err = self._start_robot_camera(entry.key, entry.rtsp_url)
-                        if err:
-                            raise RuntimeError(err)
-                        threading.Thread(target=self._stderr_reader, args=(proc, entry.key), daemon=True).start()
-                        entry.stop_event = threading.Event()
-                        feeder = threading.Thread(target=self._feeder_loop, args=(entry,), daemon=True)
-                        feeder.start()
-                        with self._lock:
-                            entry.process = proc
-                            entry.feeder_thread = feeder
-                            entry.restart_count += 1
-                            entry.started_at = time.time()
-                    else:
-                        proc, err = self._start_external_rtsp(entry.key, entry.source_url, entry.rtsp_url)
-                        if err:
-                            raise RuntimeError(err)
-                        threading.Thread(target=self._stderr_reader, args=(proc, entry.key), daemon=True).start()
-                        with self._lock:
-                            entry.process = proc
-                            entry.restart_count += 1
-                            entry.started_at = time.time()
+                    proc, err = self._start_rtsp_transcode(entry.key, entry.source_url, entry.rtsp_url)
+                    if err:
+                        raise RuntimeError(err)
+                    threading.Thread(target=self._stderr_reader, args=(proc, entry.key), daemon=True).start()
+                    with self._lock:
+                        entry.process = proc
+                        entry.restart_count += 1
+                        entry.started_at = time.time()
 
                     logger.info(f"Relay {entry.key} restarted successfully")
                     entry.restart_count = 0  # reset on success
@@ -434,32 +329,18 @@ def list_relays():
 def start_relay():
     data = request.get_json(force=True)
     key = data.get("key")
-    relay_type = data.get("type")
-
-    if not key or not relay_type:
-        return jsonify({"error": "key and type required"}), 400
-
     source_url = data.get("source_url")
+
+    if not key or not source_url:
+        return jsonify({"error": "key and source_url required"}), 400
+
     mediamtx_url = data.get("mediamtx_url")
 
-    rtsp_path, err = manager.start_relay(key, relay_type, source_url, mediamtx_url)
+    rtsp_path, err = manager.start_relay(key, source_url, mediamtx_url)
     if err:
         return jsonify({"error": err}), 400
 
     return jsonify({"key": key, "rtsp_path": rtsp_path})
-
-
-@app.route("/relays/<path:key>/frame", methods=["POST"])
-def feed_frame(key):
-    jpeg_bytes = request.get_data()
-    if not jpeg_bytes:
-        return jsonify({"error": "empty body"}), 400
-
-    ok, err = manager.feed_frame(key, jpeg_bytes)
-    if not ok:
-        return jsonify({"error": err}), 404
-
-    return "", 204
 
 
 @app.route("/relays/<path:key>", methods=["DELETE"])

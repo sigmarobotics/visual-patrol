@@ -33,6 +33,7 @@ from patrol_service import patrol_service
 from cloud_ai_service import ai_service
 from edge_ai_service import test_edge_ai
 from relay_manager import relay_service_client
+from frame_hub import frame_hub
 from pdf_service import generate_patrol_report, generate_analysis_report
 
 import logging
@@ -158,13 +159,13 @@ def gen_frames(camera_func):
             if image:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + image.data + b'\r\n')
-            time.sleep(0.05) # ~20fps
+            time.sleep(0.1) # ~10fps
         except Exception as e:
             time.sleep(1)
 
 @app.route('/api/camera/front')
 def video_feed_front():
-    return flask.Response(gen_frames(robot_service.get_front_camera_image),
+    return flask.Response(gen_frames(frame_hub.get_latest_frame),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/camera/back')
@@ -175,7 +176,7 @@ def video_feed_back():
 @app.route('/api/test_ai', methods=['POST'])
 def test_ai_route():
     try:
-        img_response = robot_service.get_front_camera_image()
+        img_response = frame_hub.get_latest_frame()
         if not img_response:
              return jsonify({"error": "Robot camera not available"}), 503
 
@@ -231,7 +232,6 @@ def test_edge_ai_start():
         "stream_source": stream_source,
         "external_rtsp_url": external_rtsp_url,
         "robot_id": ROBOT_ID,
-        "frame_func": robot_service.get_front_camera_image,
         "mediamtx_internal": f"{jetson_host}:{JETSON_MEDIAMTX_PORT}",
         "mediamtx_external": f"localhost:{JETSON_MEDIAMTX_PORT}",
     })
@@ -275,22 +275,33 @@ def relay_status():
 
 @app.route('/api/relay/test', methods=['POST'])
 def relay_test():
-    """Quick test: start robot camera relay via relay service, wait 3s, check status, stop."""
+    """Quick test: start robot camera relay via frame_hub + relay service, wait 3s, check status, stop."""
     if not relay_service_client:
         return jsonify({"error": "Relay service not configured (RELAY_SERVICE_URL empty)"}), 400
+
+    settings = settings_service.get_all()
+    jetson_host = settings.get("jetson_host", "")
+    if not jetson_host:
+        return jsonify({"error": "jetson_host not configured"}), 400
+
     key = f"{ROBOT_ID}/camera"
     try:
-        rtsp_path, err = relay_service_client.start_relay(key, "robot_camera")
+        from config import JETSON_MEDIAMTX_PORT
+        raw_path = f"/raw/{ROBOT_ID}/camera"
+        frame_hub.start_rtsp_push(f"{jetson_host}:{JETSON_MEDIAMTX_PORT}", raw_path)
+        source_url = f"rtsp://localhost:{JETSON_MEDIAMTX_PORT}{raw_path}"
+        rtsp_path, err = relay_service_client.start_relay(key, source_url)
         if err:
+            frame_hub.stop_rtsp_push()
             return jsonify({"error": err}), 500
-        relay_service_client.start_frame_feeder(key, robot_service.get_front_camera_image)
         time.sleep(3)
         status = relay_service_client.get_status()
-        relay_service_client.stop_frame_feeder(key)
+        frame_hub.stop_rtsp_push()
         relay_service_client.stop_relay(key)
         return jsonify({"rtsp_path": rtsp_path, "status": status})
     except Exception as e:
         try:
+            frame_hub.stop_rtsp_push()
             relay_service_client.stop_all()
         except Exception:
             pass
@@ -333,6 +344,8 @@ def handle_settings():
             current_settings.pop('robot_ip', None)
 
             settings_service.save(current_settings)
+            if 'enable_idle_stream' in new_settings:
+                frame_hub.on_idle_stream_changed(current_settings.get('enable_idle_stream', True))
             return jsonify({"status": "saved"})
         except Exception as e:
             logging.error(f"Failed to save settings: {e}")
