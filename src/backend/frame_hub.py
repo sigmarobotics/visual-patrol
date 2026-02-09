@@ -126,7 +126,7 @@ class FrameHub:
 
         Args:
             target_mediamtx: Jetson mediamtx address (e.g., "192.168.50.1:8555")
-            rtsp_path: RTSP path (e.g., "/raw/robot-a/camera")
+            rtsp_path: RTSP path (e.g., "/robot-a/camera")
         """
         if self._ffmpeg_proc and self._ffmpeg_proc.poll() is None:
             logger.info("RTSP push already running")
@@ -190,7 +190,7 @@ class FrameHub:
         cmd = [
             "ffmpeg", "-y",
             "-f", "image2pipe",
-            "-framerate", str(1.0 / FEEDER_INTERVAL),  # 0.5fps
+            "-framerate", str(1.0 / FEEDER_INTERVAL),  # 2fps
             "-i", "pipe:0",
             "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
             "-c:v", "libx264",

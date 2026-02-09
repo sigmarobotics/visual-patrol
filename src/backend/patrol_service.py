@@ -369,28 +369,18 @@ class PatrolService:
             streams = []
 
             if settings.get("enable_robot_camera_relay"):
-                if not relay_service_client:
-                    logger.warning("Relay service not configured, skipping robot camera relay")
-                else:
-                    try:
-                        key = f"{ROBOT_ID}/camera"
-                        # 1. Push raw stream from frame cache to Jetson mediamtx
-                        raw_path = f"/raw/{ROBOT_ID}/camera"
-                        frame_hub.start_rtsp_push(
-                            f"{jetson_host}:{JETSON_MEDIAMTX_PORT}", raw_path)
-                        # 2. Tell Jetson relay to read from raw path and transcode
-                        source_url = f"rtsp://localhost:{JETSON_MEDIAMTX_PORT}{raw_path}"
-                        rtsp_path, err = relay_service_client.start_relay(key, source_url)
-                        if err:
-                            raise RuntimeError(err)
-                        streams.append({
-                            "rtsp_url": f"rtsp://{mediamtx_for_jps}{rtsp_path}",
-                            "name": f"{ROBOT_NAME} Camera",
-                            "type": "robot_camera",
-                            "evidence_func": frame_hub.get_latest_frame,
-                        })
-                    except Exception as e:
-                        logger.error(f"Failed to start robot camera relay: {e}")
+                try:
+                    final_path = f"/{ROBOT_ID}/camera"
+                    frame_hub.start_rtsp_push(
+                        f"{jetson_host}:{JETSON_MEDIAMTX_PORT}", final_path)
+                    streams.append({
+                        "rtsp_url": f"rtsp://{mediamtx_for_jps}{final_path}",
+                        "name": f"{ROBOT_NAME} Camera",
+                        "type": "robot_camera",
+                        "evidence_func": frame_hub.get_latest_frame,
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to start robot camera push: {e}")
 
             ext_url = settings.get("external_rtsp_url", "")
             if settings.get("enable_external_rtsp") and ext_url:
@@ -414,8 +404,11 @@ class PatrolService:
             if streams:
                 verified = []
                 for s in streams:
-                    s_key = s["rtsp_url"].split(mediamtx_for_jps)[-1].lstrip("/")
-                    ready = relay_service_client.wait_for_stream(s_key, timeout=60)
+                    if s["type"] == "robot_camera":
+                        ready = frame_hub.wait_for_push_ready(timeout=30)
+                    else:
+                        s_key = s["rtsp_url"].split(mediamtx_for_jps)[-1].lstrip("/")
+                        ready = relay_service_client.wait_for_stream(s_key, timeout=60)
                     if ready:
                         verified.append(s)
                     else:
