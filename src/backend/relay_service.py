@@ -11,6 +11,7 @@ Env vars:
     RELAY_SERVICE_PORT: Listen port (default 5020)
     MEDIAMTX_HOST: mediamtx host:port (default localhost:8555)
     USE_NVENC: Use NVENC hardware encoder (default true)
+    RELAY_FPS: Output framerate for transcode (default 0.5)
     LOG_DIR: Log directory (default ./logs)
 """
 
@@ -32,6 +33,7 @@ from flask import Flask, request, jsonify
 PORT = int(os.getenv("RELAY_SERVICE_PORT", "5020"))
 MEDIAMTX_HOST = os.getenv("MEDIAMTX_HOST", "localhost:8555")
 USE_NVENC = os.getenv("USE_NVENC", "true").lower() in ("true", "1", "yes")
+RELAY_FPS = os.getenv("RELAY_FPS", "0.5")
 LOG_DIR = os.getenv("LOG_DIR", "./logs")
 
 MAX_RETRIES = 0  # 0 = unlimited retries
@@ -166,14 +168,15 @@ class RelayServiceManager:
     # --- Internal ---
 
     def _start_rtsp_transcode(self, key, source_url, rtsp_url):
-        """ffmpeg: RTSP input -> transcode H264 Baseline 0.5fps -> RTSP output."""
+        """ffmpeg: RTSP input -> transcode H264 Baseline -> RTSP output."""
+        vf = f"fps={RELAY_FPS},scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2"
         if USE_NVENC:
             cmd = [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "tcp",
                 "-i", source_url,
                 "-an",
-                "-vf", "fps=0.5,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+                "-vf", vf,
                 "-c:v", "h264_nvmpi",
                 "-b:v", "2M",
                 "-pix_fmt", "yuv420p",
@@ -186,7 +189,7 @@ class RelayServiceManager:
                 "-rtsp_transport", "tcp",
                 "-i", source_url,
                 "-an",
-                "-vf", "fps=0.5,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+                "-vf", vf,
                 "-c:v", "libx264",
                 "-preset", "ultrafast", "-tune", "zerolatency",
                 "-profile:v", "baseline", "-level", "3.1",
@@ -197,7 +200,7 @@ class RelayServiceManager:
                 rtsp_url,
             ]
 
-        logger.info(f"Starting RTSP transcode: {key} (nvenc={USE_NVENC})")
+        logger.info(f"Starting RTSP transcode: {key} (nvenc={USE_NVENC}, fps={RELAY_FPS})")
         try:
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL,
@@ -363,5 +366,5 @@ def stop_all_relays():
 
 
 if __name__ == "__main__":
-    logger.info(f"Relay Service starting on port {PORT} (mediamtx={MEDIAMTX_HOST}, nvenc={USE_NVENC})")
+    logger.info(f"Relay Service starting on port {PORT} (mediamtx={MEDIAMTX_HOST}, nvenc={USE_NVENC}, fps={RELAY_FPS})")
     app.run(host="0.0.0.0", port=PORT, debug=False)
