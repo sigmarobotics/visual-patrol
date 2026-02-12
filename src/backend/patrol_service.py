@@ -203,8 +203,10 @@ class PatrolService:
 
         if was_patrolling:
             logger.info("Stop patrol requested.")
-            robot_service.cancel_command()
-            robot_service.return_home()
+            try:
+                robot_service.cancel_command()
+            except Exception as e:
+                logger.warning(f"cancel_command failed during stop: {e}")
         return True
 
     # === Inspection Worker ===

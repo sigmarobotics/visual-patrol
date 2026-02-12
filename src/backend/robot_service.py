@@ -1,7 +1,13 @@
 import threading
 import time
+import grpc
 import kachaka_api
 from config import ROBOT_IP
+from logger import get_logger
+
+logger = get_logger(__name__, "robot.log")
+
+GRPC_RETRY_DELAY = 2.0
 
 
 class RobotService:
@@ -34,10 +40,10 @@ class RobotService:
             new_client.get_robot_serial_number()
             with self.client_lock:
                 self.client = new_client
-            print(f"Connected to Kachaka at {target_ip}")
+            logger.info(f"Connected to Kachaka at {target_ip}")
             return True
         except Exception as e:
-            print(f"Failed to connect to Kachaka at {target_ip}: {e}")
+            logger.warning(f"Failed to connect to Kachaka at {target_ip}: {e}")
             with self.client_lock:
                 self.client = None
             return False
@@ -76,7 +82,7 @@ class RobotService:
                             "origin_y": png_map.origin.y
                         })
                 except Exception as e:
-                    print(f"Error fetching map: {e}")
+                    logger.warning(f"Error fetching map: {e}")
 
             # Poll status
             try:
@@ -99,12 +105,50 @@ class RobotService:
                         self.robot_state["battery"] = int(battery) if isinstance(battery, (int, float)) else 0
 
             except Exception as e:
-                print(f"Error polling robot state: {e}")
+                logger.warning(f"Error polling robot state: {e}")
                 # Reset client on persistent errors to trigger reconnect
                 with self.client_lock:
                     self.client = None
 
             time.sleep(0.1)
+
+    def _grpc_retry(self, operation, label="gRPC call", max_retries=None):
+        """Execute a gRPC operation with automatic retry on connection failure.
+
+        By default retries forever (max_retries=None) — suitable for mesh
+        networks where connectivity is intermittent but will eventually recover.
+        Set max_retries for fire-and-forget calls like cancel_command.
+
+        Args:
+            operation: callable(client) -> result
+            label: description for log messages
+            max_retries: max attempts (None = infinite)
+        """
+        attempt = 0
+        while True:
+            if max_retries is not None and attempt > max_retries:
+                logger.warning(f"{label}: giving up after {attempt} attempts")
+                return None
+
+            with self.client_lock:
+                client = self.client
+
+            if not client:
+                attempt += 1
+                logger.warning(f"{label}: no client (attempt {attempt}), reconnecting...")
+                self.connect()
+                time.sleep(GRPC_RETRY_DELAY)
+                continue
+
+            try:
+                return operation(client)
+            except grpc.RpcError as e:
+                attempt += 1
+                logger.warning(f"{label}: gRPC error (attempt {attempt}): {e.code().name}")
+                with self.client_lock:
+                    self.client = None
+                time.sleep(GRPC_RETRY_DELAY)
+                self.connect()
 
     def get_state(self):
         with self.state_lock:
@@ -115,89 +159,74 @@ class RobotService:
             return self.map_image_bytes
 
     def move_to(self, x, y, theta, wait=True):
-        with self.client_lock:
-            client = self.client
-        if client:
-            return client.move_to_pose(x, y, theta, wait_for_completion=wait)
-        return None
+        return self._grpc_retry(
+            lambda c: c.move_to_pose(x, y, theta, wait_for_completion=wait),
+            label="move_to")
 
     def move_forward(self, distance, speed=0.1):
-        with self.client_lock:
-            client = self.client
-        if client:
-            client.move_forward(distance_meter=distance, speed=speed)
+        self._grpc_retry(
+            lambda c: c.move_forward(distance_meter=distance, speed=speed),
+            label="move_forward")
 
     def rotate(self, angle):
-        with self.client_lock:
-            client = self.client
-        if client:
-            client.rotate_in_place(angle_radian=angle)
+        self._grpc_retry(
+            lambda c: c.rotate_in_place(angle_radian=angle),
+            label="rotate")
 
     def return_home(self):
-        with self.client_lock:
-            client = self.client
-        if client:
-            return client.return_home()
+        return self._grpc_retry(
+            lambda c: c.return_home(),
+            label="return_home")
 
     def cancel_command(self):
-        with self.client_lock:
-            client = self.client
-        if client:
-            client.cancel_command()
+        self._grpc_retry(
+            lambda c: c.cancel_command(),
+            label="cancel_command",
+            max_retries=3)
 
     def get_front_camera_image(self):
-        with self.client_lock:
-            client = self.client
-        if client:
-            return client.get_front_camera_ros_compressed_image()
-        return None
+        return self._grpc_retry(
+            lambda c: c.get_front_camera_ros_compressed_image(),
+            label="get_front_camera")
 
     def get_back_camera_image(self):
-        with self.client_lock:
-            client = self.client
-        if client:
-            return client.get_back_camera_ros_compressed_image()
-        return None
+        return self._grpc_retry(
+            lambda c: c.get_back_camera_ros_compressed_image(),
+            label="get_back_camera")
 
     def get_serial(self):
-        with self.client_lock:
-            client = self.client
-        if client:
-            return client.get_robot_serial_number()
-        return "unknown"
+        return self._grpc_retry(
+            lambda c: c.get_robot_serial_number(),
+            label="get_serial")
 
     def get_error_codes(self):
         """Get current robot error codes from Kachaka SDK."""
-        with self.client_lock:
-            client = self.client
-        if client:
-            try:
-                return client.get_robot_error_code()
-            except Exception:
-                return {}
-        return {}
+        try:
+            return self._grpc_retry(
+                lambda c: c.get_robot_error_code(),
+                label="get_error_codes")
+        except Exception:
+            return {}
 
     def get_locations(self):
-        """Get all saved locations from the robot"""
-        with self.client_lock:
-            client = self.client
-        if client:
-            try:
-                locations = client.get_locations()
-                result = []
-                for loc in locations:
-                    result.append({
-                        "id": loc.id,
-                        "name": loc.name,
-                        "x": loc.pose.x,
-                        "y": loc.pose.y,
-                        "theta": loc.pose.theta
-                    })
-                return result
-            except Exception as e:
-                print(f"Error getting locations: {e}")
-                return []
-        return []
+        """Get all saved locations from the robot."""
+        try:
+            locations = self._grpc_retry(
+                lambda c: c.get_locations(),
+                label="get_locations")
+            result = []
+            for loc in locations:
+                result.append({
+                    "id": loc.id,
+                    "name": loc.name,
+                    "x": loc.pose.x,
+                    "y": loc.pose.y,
+                    "theta": loc.pose.theta
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Error getting locations: {e}")
+            return []
 
 # Singleton instance
 robot_service = RobotService()
