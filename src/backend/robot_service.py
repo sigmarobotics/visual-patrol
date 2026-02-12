@@ -8,6 +8,7 @@ from logger import get_logger
 logger = get_logger(__name__, "robot.log")
 
 GRPC_RETRY_DELAY = 2.0
+COMMAND_POLL_INTERVAL = 0.5  # polling interval for command completion
 
 
 class RobotService:
@@ -159,9 +160,36 @@ class RobotService:
             return self.map_image_bytes
 
     def move_to(self, x, y, theta, wait=True):
-        return self._grpc_retry(
-            lambda c: c.move_to_pose(x, y, theta, wait_for_completion=wait),
-            label="move_to")
+        """Move robot to pose. Disconnection-safe for mesh network roaming.
+
+        Phase 1: Send move command (retry until accepted).
+        Phase 2: Poll is_command_running() until done (reconnect-safe — never
+                 re-sends the move command, just keeps checking status).
+        """
+        # Phase 1: fire command (no wait)
+        result = self._grpc_retry(
+            lambda c: c.move_to_pose(x, y, theta, wait_for_completion=False),
+            label="move_to (send)")
+
+        if not wait:
+            return result
+
+        # Phase 2: poll for completion (reconnect-safe)
+        while True:
+            running = self._grpc_retry(
+                lambda c: c.is_command_running(),
+                label="move_to (poll)")
+            if not running:
+                break
+            time.sleep(COMMAND_POLL_INTERVAL)
+
+        # Get final result
+        last = self._grpc_retry(
+            lambda c: c.get_last_command_result(),
+            label="move_to (result)")
+        if last:
+            return last[0]  # Result(success, error_code)
+        return result
 
     def move_forward(self, distance, speed=0.1):
         self._grpc_retry(
@@ -174,9 +202,25 @@ class RobotService:
             label="rotate")
 
     def return_home(self):
-        return self._grpc_retry(
-            lambda c: c.return_home(),
-            label="return_home")
+        """Return to charging dock. Same two-phase pattern as move_to."""
+        self._grpc_retry(
+            lambda c: c.return_home(wait_for_completion=False),
+            label="return_home (send)")
+
+        while True:
+            running = self._grpc_retry(
+                lambda c: c.is_command_running(),
+                label="return_home (poll)")
+            if not running:
+                break
+            time.sleep(COMMAND_POLL_INTERVAL)
+
+        last = self._grpc_retry(
+            lambda c: c.get_last_command_result(),
+            label="return_home (result)")
+        if last:
+            return last[0]
+        return None
 
     def cancel_command(self):
         self._grpc_retry(

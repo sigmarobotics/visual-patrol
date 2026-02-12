@@ -585,16 +585,18 @@ class PatrolService:
             self.is_patrolling = False
 
     def _move_to_point(self, point):
-        """Move robot to patrol point. Returns dict with success, error_code, title, description."""
-        if not robot_service.get_client():
-            return {"success": False, "error_code": -1, "title": "Disconnected", "description": "Robot not connected"}
+        """Move robot to patrol point. Returns dict with success, error_code, title, description.
 
+        No pre-check for client connectivity — _grpc_retry in move_to() handles
+        reconnection automatically, which is essential for mesh network roaming
+        where brief disconnects are expected.
+        """
         try:
             result = robot_service.move_to(
                 float(point['x']), float(point['y']),
                 float(point.get('theta', 0.0)), wait=True
             )
-            if result and result.error_code == 0:
+            if result and result.success:
                 return {"success": True}
 
             error_code = result.error_code if result else -1
