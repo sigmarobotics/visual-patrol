@@ -1,20 +1,21 @@
 import threading
 import time
-import grpc
 import kachaka_api
 from config import ROBOT_IP
 from logger import get_logger
 
 logger = get_logger(__name__, "robot.log")
 
-GRPC_RETRY_DELAY = 2.0
-COMMAND_POLL_INTERVAL = 0.5  # polling interval for command completion
+POLL_INTERVAL = 0.1
+RECONNECT_WAIT = 2.0
+SEND_RETRY_INTERVAL = 2.0
+COMMAND_POLL_INTERVAL = 0.5
 
 
 class RobotService:
     def __init__(self):
-        self.client = None
-        self.client_lock = threading.Lock()  # Lock for client access (TOCTOU fix)
+        self.client = kachaka_api.KachakaApiClient(ROBOT_IP)
+        self.connected = False
         self.state_lock = threading.Lock()
         self.robot_state = {
             "battery": 0,
@@ -33,62 +34,32 @@ class RobotService:
         self.polling_thread = threading.Thread(target=self._polling_loop, daemon=True)
         self.polling_thread.start()
 
-    def connect(self):
-        target_ip = ROBOT_IP
-
-        try:
-            new_client = kachaka_api.KachakaApiClient(target_ip)
-            new_client.get_robot_serial_number()
-            with self.client_lock:
-                self.client = new_client
-            logger.info(f"Connected to Kachaka at {target_ip}")
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to connect to Kachaka at {target_ip}: {e}")
-            with self.client_lock:
-                self.client = None
-            return False
-
-    def get_client(self):
-        with self.client_lock:
-            return self.client
-
     def _polling_loop(self):
+        was_connected = False
         while True:
-            with self.client_lock:
-                current_client = self.client
-
-            if not current_client:
-                self.connect()
-                with self.client_lock:
-                    current_client = self.client
-                if not current_client:
-                    time.sleep(2)
-                    continue
-
-            # Fetch map if missing
-            with self.state_lock:
-                map_missing = self.map_image_bytes is None
-
-            if map_missing:
-                try:
-                    png_map = current_client.get_png_map()
-                    with self.state_lock:
-                        self.map_image_bytes = png_map.data
-                        self.robot_state["map_info"].update({
-                            "resolution": png_map.resolution,
-                            "width": png_map.width,
-                            "height": png_map.height,
-                            "origin_x": png_map.origin.x,
-                            "origin_y": png_map.origin.y
-                        })
-                except Exception as e:
-                    logger.warning(f"Error fetching map: {e}")
-
-            # Poll status
             try:
-                pose = current_client.get_robot_pose()
-                battery = current_client.get_battery_info()
+                # Fetch map if missing (failure here doesn't block pose/battery)
+                with self.state_lock:
+                    map_missing = self.map_image_bytes is None
+
+                if map_missing:
+                    try:
+                        png_map = self.client.get_png_map()
+                        with self.state_lock:
+                            self.map_image_bytes = png_map.data
+                            self.robot_state["map_info"].update({
+                                "resolution": png_map.resolution,
+                                "width": png_map.width,
+                                "height": png_map.height,
+                                "origin_x": png_map.origin.x,
+                                "origin_y": png_map.origin.y
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error fetching map: {e}")
+
+                # Poll pose and battery
+                pose = self.client.get_robot_pose()
+                battery = self.client.get_battery_info()
 
                 with self.state_lock:
                     actual_pose = getattr(pose, 'pose', pose)
@@ -105,51 +76,18 @@ class RobotService:
                     else:
                         self.robot_state["battery"] = int(battery) if isinstance(battery, (int, float)) else 0
 
+                if not was_connected:
+                    logger.info(f"Connected to Kachaka at {ROBOT_IP}")
+                    was_connected = True
+                self.connected = True
+                time.sleep(POLL_INTERVAL)
+
             except Exception as e:
-                logger.warning(f"Error polling robot state: {e}")
-                # Reset client on persistent errors to trigger reconnect
-                with self.client_lock:
-                    self.client = None
-
-            time.sleep(0.1)
-
-    def _grpc_retry(self, operation, label="gRPC call", max_retries=None):
-        """Execute a gRPC operation with automatic retry on connection failure.
-
-        By default retries forever (max_retries=None) — suitable for mesh
-        networks where connectivity is intermittent but will eventually recover.
-        Set max_retries for fire-and-forget calls like cancel_command.
-
-        Args:
-            operation: callable(client) -> result
-            label: description for log messages
-            max_retries: max attempts (None = infinite)
-        """
-        attempt = 0
-        while True:
-            if max_retries is not None and attempt > max_retries:
-                logger.warning(f"{label}: giving up after {attempt} attempts")
-                return None
-
-            with self.client_lock:
-                client = self.client
-
-            if not client:
-                attempt += 1
-                logger.warning(f"{label}: no client (attempt {attempt}), reconnecting...")
-                self.connect()
-                time.sleep(GRPC_RETRY_DELAY)
-                continue
-
-            try:
-                return operation(client)
-            except grpc.RpcError as e:
-                attempt += 1
-                logger.warning(f"{label}: gRPC error (attempt {attempt}): {e.code().name}")
-                with self.client_lock:
-                    self.client = None
-                time.sleep(GRPC_RETRY_DELAY)
-                self.connect()
+                if was_connected:
+                    logger.warning(f"Lost connection to Kachaka: {e}")
+                    was_connected = False
+                self.connected = False
+                time.sleep(RECONNECT_WAIT)
 
     def get_state(self):
         with self.state_lock:
@@ -160,104 +98,114 @@ class RobotService:
             return self.map_image_bytes
 
     def move_to(self, x, y, theta, wait=True):
-        """Move robot to pose. Disconnection-safe for mesh network roaming.
+        """Move robot to pose. Resilient to transient gRPC failures on mesh networks.
 
         Phase 1: Send move command (retry until accepted).
-        Phase 2: Poll is_command_running() until done (reconnect-safe — never
-                 re-sends the move command, just keeps checking status).
+        Phase 2: Poll is_command_running() until done (never re-sends move).
+        Phase 3: Try to get result, fail gracefully.
         """
-        # Phase 1: fire command (no wait)
-        result = self._grpc_retry(
-            lambda c: c.move_to_pose(x, y, theta, wait_for_completion=False),
-            label="move_to (send)")
+        # Phase 1: send command
+        while True:
+            try:
+                result = self.client.move_to_pose(x, y, theta, wait_for_completion=False)
+                break
+            except Exception as e:
+                logger.warning(f"move_to (send): {e}")
+                time.sleep(SEND_RETRY_INTERVAL)
 
         if not wait:
             return result
 
-        # Phase 2: poll for completion (reconnect-safe)
+        # Phase 2: poll for completion
         while True:
-            running = self._grpc_retry(
-                lambda c: c.is_command_running(),
-                label="move_to (poll)")
-            if not running:
-                break
+            try:
+                if not self.client.is_command_running():
+                    break
+            except Exception as e:
+                logger.warning(f"move_to (poll): {e}")
             time.sleep(COMMAND_POLL_INTERVAL)
 
-        # Get final result
-        last = self._grpc_retry(
-            lambda c: c.get_last_command_result(),
-            label="move_to (result)")
-        if last:
-            return last[0]  # Result(success, error_code)
+        # Phase 3: get result
+        try:
+            last = self.client.get_last_command_result()
+            if last:
+                return last[0]
+        except Exception as e:
+            logger.warning(f"move_to (result): {e}")
         return result
-
-    def move_forward(self, distance, speed=0.1):
-        self._grpc_retry(
-            lambda c: c.move_forward(distance_meter=distance, speed=speed),
-            label="move_forward")
-
-    def rotate(self, angle):
-        self._grpc_retry(
-            lambda c: c.rotate_in_place(angle_radian=angle),
-            label="rotate")
 
     def return_home(self):
         """Return to charging dock. Same two-phase pattern as move_to."""
-        self._grpc_retry(
-            lambda c: c.return_home(wait_for_completion=False),
-            label="return_home (send)")
-
+        # Phase 1: send command
         while True:
-            running = self._grpc_retry(
-                lambda c: c.is_command_running(),
-                label="return_home (poll)")
-            if not running:
+            try:
+                self.client.return_home(wait_for_completion=False)
                 break
+            except Exception as e:
+                logger.warning(f"return_home (send): {e}")
+                time.sleep(SEND_RETRY_INTERVAL)
+
+        # Phase 2: poll for completion
+        while True:
+            try:
+                if not self.client.is_command_running():
+                    break
+            except Exception as e:
+                logger.warning(f"return_home (poll): {e}")
             time.sleep(COMMAND_POLL_INTERVAL)
 
-        last = self._grpc_retry(
-            lambda c: c.get_last_command_result(),
-            label="return_home (result)")
-        if last:
-            return last[0]
+        # Phase 3: get result
+        try:
+            last = self.client.get_last_command_result()
+            if last:
+                return last[0]
+        except Exception as e:
+            logger.warning(f"return_home (result): {e}")
         return None
 
+    def move_forward(self, distance, speed=0.1):
+        self.client.move_forward(distance_meter=distance, speed=speed)
+
+    def rotate(self, angle):
+        self.client.rotate_in_place(angle_radian=angle)
+
     def cancel_command(self):
-        self._grpc_retry(
-            lambda c: c.cancel_command(),
-            label="cancel_command",
-            max_retries=3)
+        try:
+            self.client.cancel_command()
+        except Exception as e:
+            logger.warning(f"cancel_command: {e}")
 
     def get_front_camera_image(self):
-        return self._grpc_retry(
-            lambda c: c.get_front_camera_ros_compressed_image(),
-            label="get_front_camera")
+        try:
+            return self.client.get_front_camera_ros_compressed_image()
+        except Exception as e:
+            logger.warning(f"get_front_camera: {e}")
+            return None
 
     def get_back_camera_image(self):
-        return self._grpc_retry(
-            lambda c: c.get_back_camera_ros_compressed_image(),
-            label="get_back_camera")
+        try:
+            return self.client.get_back_camera_ros_compressed_image()
+        except Exception as e:
+            logger.warning(f"get_back_camera: {e}")
+            return None
 
     def get_serial(self):
-        return self._grpc_retry(
-            lambda c: c.get_robot_serial_number(),
-            label="get_serial")
+        try:
+            return self.client.get_robot_serial_number()
+        except Exception as e:
+            logger.warning(f"get_serial: {e}")
+            return None
 
     def get_error_codes(self):
-        """Get current robot error codes from Kachaka SDK."""
         try:
-            return self._grpc_retry(
-                lambda c: c.get_robot_error_code(),
-                label="get_error_codes")
-        except Exception:
+            return self.client.get_robot_error_code()
+        except Exception as e:
+            logger.warning(f"get_error_codes: {e}")
             return {}
 
     def get_locations(self):
-        """Get all saved locations from the robot."""
         try:
-            locations = self._grpc_retry(
-                lambda c: c.get_locations(),
-                label="get_locations")
+            locations = self.client.get_locations()
             result = []
             for loc in locations:
                 result.append({
@@ -271,6 +219,7 @@ class RobotService:
         except Exception as e:
             logger.error(f"Error getting locations: {e}")
             return []
+
 
 # Singleton instance
 robot_service = RobotService()

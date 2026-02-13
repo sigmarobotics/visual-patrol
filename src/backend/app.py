@@ -978,7 +978,7 @@ def _heartbeat_loop():
     """Update robot heartbeat every 30 seconds, reflecting actual Kachaka connection status."""
     while True:
         try:
-            is_connected = robot_service.get_client() is not None
+            is_connected = robot_service.connected
             update_robot_heartbeat(ROBOT_ID, is_connected)
         except Exception as e:
             logging.warning(f"Heartbeat error: {e}")
