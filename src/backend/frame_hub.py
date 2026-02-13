@@ -37,6 +37,7 @@ class FrameHub:
         self._frame_func = frame_func
         self._latest_frame = None        # gRPC response object (has .data)
         self._frame_lock = threading.Lock()
+        self._frame_time = 0             # monotonic timestamp of last successful poll
 
         # Polling lifecycle
         self._polling = False
@@ -74,6 +75,7 @@ class FrameHub:
         self._poll_stop.set()
         with self._frame_lock:
             self._latest_frame = None
+            self._frame_time = 0
         logger.info("Frame polling stopped")
 
     def set_patrol_active(self, active):
@@ -102,6 +104,7 @@ class FrameHub:
                 if frame:
                     with self._frame_lock:
                         self._latest_frame = frame
+                        self._frame_time = time.monotonic()
             except Exception as e:
                 logger.debug(f"Poll error: {e}")
             self._poll_stop.wait(POLL_INTERVAL)
@@ -115,6 +118,20 @@ class FrameHub:
         """
         with self._frame_lock:
             return self._latest_frame
+
+    def wait_for_fresh_frame(self, timeout=10.0):
+        """Block until a frame newer than call time is cached.
+        Returns True if fresh frame obtained, False on timeout.
+        """
+        t0 = time.monotonic()
+        deadline = t0 + timeout
+        while time.monotonic() < deadline:
+            with self._frame_lock:
+                if self._frame_time > t0:
+                    return True
+            time.sleep(POLL_INTERVAL)
+        logger.warning(f"No fresh frame after {timeout}s")
+        return False
 
     # --- RTSP Push to Jetson mediamtx ---
 

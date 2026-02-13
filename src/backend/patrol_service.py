@@ -463,9 +463,11 @@ class PatrolService:
                     if not self.is_patrolling:
                         break
 
-                # Inspect point
+                # Wait for fresh camera frame (ensures post-arrival image)
                 self._set_status(f"Inspecting {point_name}...")
-                time.sleep(2)
+                if not frame_hub.wait_for_fresh_frame(timeout=10):
+                    logger.warning(f"No fresh frame for {point_name}, using cached")
+                time.sleep(2)  # let robot physically settle
 
                 self._inspect_point(
                     point, point_name, run_images_dir, settings,
