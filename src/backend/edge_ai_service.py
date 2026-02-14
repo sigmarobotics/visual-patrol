@@ -3,6 +3,7 @@ Edge AI Service - Background camera monitoring via VILA JPS Alert API during pat
 
 Uses VILA JPS Stream API + Alert API + WebSocket for efficient continuous monitoring.
 TestLiveMonitor uses the same JPS flow for settings page quick test (no DB writes).
+JPS HTTP/WS operations are in jps_client.py (shared between both monitors).
 """
 
 import base64
@@ -16,8 +17,8 @@ from urllib.parse import urlparse
 
 import cv2
 import requests
-import websocket
 
+import jps_client
 from config import ROBOT_ID, ROBOT_DATA_DIR
 from database import db_context
 from logger import get_logger
@@ -26,9 +27,6 @@ from utils import get_current_time_str
 logger = get_logger("edge_ai_service", "edge_ai_service.log")
 
 MAX_RULES = 10
-WS_PORT = 5016
-WS_RECONNECT_DELAY = 5
-WS_MAX_RECONNECTS = 10
 
 
 class LiveMonitor:
@@ -89,14 +87,14 @@ class LiveMonitor:
             rules = rules[:MAX_RULES]
 
         # 0. Clean up any stale streams from previous runs
-        self._cleanup_stale_streams(vila_jps_url)
+        jps_client.cleanup_stale_streams(vila_jps_url)
 
         # 1. Register each stream (with retry — gstDecoder may need time)
         for stream in streams:
             stream_id = None
             for attempt in range(1, 4):
                 try:
-                    stream_id = self._register_stream(vila_jps_url, stream["rtsp_url"], stream["name"])
+                    stream_id = jps_client.register_stream(vila_jps_url, stream["rtsp_url"], stream["name"])
                     if stream_id:
                         self._stream_ids.append((stream_id, stream))
                         logger.info(f"Registered stream (attempt {attempt}): {stream['name']} -> stream_id={stream_id}")
@@ -116,7 +114,7 @@ class LiveMonitor:
         # 2. Set alert rules per stream
         for stream_id, stream in self._stream_ids:
             try:
-                self._set_alert_rules(vila_jps_url, stream_id, rules)
+                jps_client.set_alert_rules(vila_jps_url, stream_id, rules)
                 logger.info(f"Set {len(rules)} alert rules for stream {stream_id}")
             except Exception as e:
                 logger.error(f"Error setting alert rules for stream {stream_id}: {e}")
@@ -153,7 +151,7 @@ class LiveMonitor:
             vila_jps_url = self._config["vila_jps_url"].rstrip("/")
             for stream_id, _ in self._stream_ids:
                 try:
-                    self._deregister_stream(vila_jps_url, stream_id)
+                    jps_client.deregister_stream(vila_jps_url, stream_id)
                     logger.info(f"Deregistered stream: {stream_id}")
                 except Exception as e:
                     logger.warning(f"Error deregistering stream {stream_id}: {e}")
@@ -166,92 +164,19 @@ class LiveMonitor:
         with self._lock:
             return list(self.alerts)
 
-    # --- VILA JPS API ---
-
-    def _cleanup_stale_streams(self, vila_jps_url):
-        """Remove any existing streams from VILA JPS to avoid 'Stream Maximum reached' errors."""
-        try:
-            url = f"{vila_jps_url}/api/v1/live-stream"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            streams = resp.json()
-            for s in streams:
-                sid = s.get("id")
-                if sid:
-                    try:
-                        self._deregister_stream(vila_jps_url, sid)
-                        logger.info(f"Cleaned up stale stream: {sid}")
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning(f"Failed to cleanup stale streams: {e}")
-
-    def _register_stream(self, vila_jps_url, rtsp_url, name):
-        """POST /api/v1/live-stream to register a stream. Returns stream_id or None."""
-        url = f"{vila_jps_url}/api/v1/live-stream"
-        body = {"liveStreamUrl": rtsp_url, "name": name}
-        resp = requests.post(url, json=body, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("id") or data.get("stream_id")
-
-    def _set_alert_rules(self, vila_jps_url, stream_id, rules):
-        """POST /api/v1/alerts to set alert rules for a stream."""
-        url = f"{vila_jps_url}/api/v1/alerts"
-        body = {"alerts": rules, "id": stream_id}
-        resp = requests.post(url, json=body, timeout=60)
-        resp.raise_for_status()
-
-    def _deregister_stream(self, vila_jps_url, stream_id):
-        """DELETE /api/v1/live-stream/{stream_id}."""
-        url = f"{vila_jps_url}/api/v1/live-stream/{stream_id}"
-        resp = requests.delete(url, timeout=10)
-        resp.raise_for_status()
-
     # --- WebSocket Listener ---
 
     def _ws_listener(self):
         """Connect to VILA JPS WebSocket and listen for alert events."""
-        vila_jps_url = self._config["vila_jps_url"].rstrip("/")
-        parsed = urlparse(vila_jps_url)
-        ws_host = parsed.hostname
-        ws_url = f"ws://{ws_host}:{WS_PORT}/api/v1/alerts/ws"
-
         evidence_dir = os.path.join(ROBOT_DATA_DIR, "report", "edge_ai_alerts")
         os.makedirs(evidence_dir, exist_ok=True)
 
-        reconnect_count = 0
-
-        while not self._ws_stop.is_set() and reconnect_count < WS_MAX_RECONNECTS:
-            try:
-                logger.info(f"Connecting to VILA WS: {ws_url}")
-                self._ws = websocket.WebSocket()
-                self._ws.settimeout(5)
-                self._ws.connect(ws_url)
-                logger.info("VILA WebSocket connected")
-                reconnect_count = 0  # Reset on successful connect
-
-                while not self._ws_stop.is_set():
-                    try:
-                        raw = self._ws.recv()
-                        if not raw:
-                            continue
-                        self._handle_ws_event(raw, evidence_dir)
-                    except websocket.WebSocketTimeoutException:
-                        continue
-                    except websocket.WebSocketConnectionClosedException:
-                        logger.warning("VILA WebSocket closed by server")
-                        break
-
-            except Exception as e:
-                if self._ws_stop.is_set():
-                    break
-                reconnect_count += 1
-                logger.warning(f"VILA WS error (attempt {reconnect_count}/{WS_MAX_RECONNECTS}): {e}")
-                self._ws_stop.wait(WS_RECONNECT_DELAY)
-
-        if reconnect_count >= WS_MAX_RECONNECTS:
-            logger.error("VILA WebSocket max reconnects exceeded")
+        self._ws = jps_client.run_ws_listener(
+            vila_jps_url=self._config["vila_jps_url"],
+            stop_event=self._ws_stop,
+            on_message=lambda raw: self._handle_ws_event(raw, evidence_dir),
+            label="VILA",
+        )
 
     def _handle_ws_event(self, raw, evidence_dir):
         """Process a single WebSocket alert event."""
@@ -548,7 +473,7 @@ class TestLiveMonitor:
 
         # 3. Cleanup stale JPS streams
         try:
-            self._cleanup_stale_streams(vila_jps_url)
+            jps_client.cleanup_stale_streams(vila_jps_url)
         except Exception as e:
             logger.warning(f"Stale stream cleanup failed: {e}")
 
@@ -559,7 +484,7 @@ class TestLiveMonitor:
             if not self.is_running:
                 return
             try:
-                self._stream_id = self._register_stream(vila_jps_url, rtsp_url_for_jps, stream_name)
+                self._stream_id = jps_client.register_stream(vila_jps_url, rtsp_url_for_jps, stream_name)
                 if self._stream_id:
                     logger.info(f"Registered test stream (attempt {attempt}): {stream_name} -> stream_id={self._stream_id}")
                     break
@@ -584,7 +509,7 @@ class TestLiveMonitor:
 
         # 5. Set alert rules
         try:
-            self._set_alert_rules(vila_jps_url, self._stream_id, rules)
+            jps_client.set_alert_rules(vila_jps_url, self._stream_id, rules)
             logger.info(f"Set {len(rules)} alert rules for test stream")
         except Exception as e:
             with self._lock:
@@ -631,7 +556,7 @@ class TestLiveMonitor:
         if self._stream_id and self._config:
             vila_jps_url = self._config["vila_jps_url"].rstrip("/")
             try:
-                self._deregister_stream(vila_jps_url, self._stream_id)
+                jps_client.deregister_stream(vila_jps_url, self._stream_id)
                 logger.info(f"Deregistered test stream: {self._stream_id}")
             except Exception as e:
                 logger.warning(f"Test stream deregister failed: {e}")
@@ -758,89 +683,30 @@ class TestLiveMonitor:
             except Exception:
                 pass
 
-    # --- VILA JPS API (same as LiveMonitor) ---
-
-    def _cleanup_stale_streams(self, vila_jps_url):
-        url = f"{vila_jps_url}/api/v1/live-stream"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        for s in resp.json():
-            sid = s.get("id")
-            if sid:
-                try:
-                    self._deregister_stream(vila_jps_url, sid)
-                    logger.info(f"Cleaned up stale stream: {sid}")
-                except Exception:
-                    pass
-
-    def _register_stream(self, vila_jps_url, rtsp_url, name):
-        url = f"{vila_jps_url}/api/v1/live-stream"
-        body = {"liveStreamUrl": rtsp_url, "name": name}
-        resp = requests.post(url, json=body, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("id") or data.get("stream_id")
-
-    def _set_alert_rules(self, vila_jps_url, stream_id, rules):
-        url = f"{vila_jps_url}/api/v1/alerts"
-        body = {"alerts": rules, "id": stream_id}
-        resp = requests.post(url, json=body, timeout=60)
-        resp.raise_for_status()
-
-    def _deregister_stream(self, vila_jps_url, stream_id):
-        url = f"{vila_jps_url}/api/v1/live-stream/{stream_id}"
-        resp = requests.delete(url, timeout=10)
-        resp.raise_for_status()
-
     # --- WebSocket Listener ---
 
     def _ws_listener(self):
-        vila_jps_url = self._config["vila_jps_url"].rstrip("/")
-        parsed = urlparse(vila_jps_url)
-        ws_host = parsed.hostname
-        ws_url = f"ws://{ws_host}:{WS_PORT}/api/v1/alerts/ws"
+        def on_connect():
+            with self._lock:
+                self.ws_connected = True
 
-        reconnect_count = 0
+        def on_disconnect():
+            with self._lock:
+                self.ws_connected = False
 
-        while not self._ws_stop.is_set() and reconnect_count < WS_MAX_RECONNECTS:
-            try:
-                logger.info(f"Test WS connecting: {ws_url}")
-                self._ws = websocket.WebSocket()
-                self._ws.settimeout(5)
-                self._ws.connect(ws_url)
-                with self._lock:
-                    self.ws_connected = True
-                logger.info("Test WS connected")
-                reconnect_count = 0
-
-                while not self._ws_stop.is_set():
-                    try:
-                        raw = self._ws.recv()
-                        if not raw:
-                            continue
-                        self._handle_ws_event(raw)
-                    except websocket.WebSocketTimeoutException:
-                        continue
-                    except websocket.WebSocketConnectionClosedException:
-                        logger.warning("Test WS closed by server")
-                        break
-
-            except Exception as e:
-                if self._ws_stop.is_set():
-                    break
-                reconnect_count += 1
-                with self._lock:
-                    self.ws_connected = False
-                logger.warning(f"Test WS error (attempt {reconnect_count}/{WS_MAX_RECONNECTS}): {e}")
-                self._ws_stop.wait(WS_RECONNECT_DELAY)
-
-        with self._lock:
-            self.ws_connected = False
-
-        if reconnect_count >= WS_MAX_RECONNECTS:
-            logger.error("Test WS max reconnects exceeded")
+        def on_max_reconnects():
             with self._lock:
                 self.error = "WebSocket max reconnects exceeded"
+
+        self._ws = jps_client.run_ws_listener(
+            vila_jps_url=self._config["vila_jps_url"],
+            stop_event=self._ws_stop,
+            on_message=self._handle_ws_event,
+            on_connect=on_connect,
+            on_disconnect=on_disconnect,
+            on_max_reconnects=on_max_reconnects,
+            label="Test",
+        )
 
     def _handle_ws_event(self, raw):
         """Process a single WebSocket alert event (no DB writes, memory only)."""

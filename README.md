@@ -27,57 +27,105 @@ Autonomous multi-robot patrol system integrating **Kachaka Robot** with **Google
 
 ## Architecture
 
-```
-+-------------------------------------------------------------+
-|  Browser (http://localhost:5000)                             |
-|  +-- Robot selector dropdown                                 |
-|  +-- 6 tabs: Patrol, Control, History, Reports, Tokens,     |
-|  |           Settings                                        |
-|  +-- /api/{robot-id}/state  -> robot-specific calls          |
-|  +-- /api/settings          -> global calls                  |
-+---------------------------+---------------------------------+
-                            |
-+---------------------------v---------------------------------+
-|  nginx (port 5000)                                           |
-|  +-- /              -> index.html (static)                   |
-|  +-- /static/       -> CSS / JS assets                       |
-|  +-- /api/{robot-id}/...  -> proxy to backend                |
-|  +-- /api/...       -> proxy to robot-a (global)             |
-+-------------------------------------------------------------+
-|  robot-a (Flask:5000)  <-> Kachaka Robot A                   |
-|  robot-b (Flask:5000)  <-> Kachaka Robot B                   |
-|  (all share ./data volume with SQLite WAL)                   |
-|                                                              |
-|  Each backend runs:                                          |
-|    frame_hub  -- gRPC poll -> frame cache -> ffmpeg RTSP push|
-|    relay_manager -- HTTP client to Jetson relay service      |
-+-------------------------------------------------------------+
-                            |
-+---------------------------v---------------------------------+
-|  Jetson Host                                                 |
-|  +-- relay_service.py (port 5020)                            |
-|  |   +-- Robot camera: raw RTSP in -> ffmpeg transcode ->    |
-|  |   |   mediamtx /{robot-id}/camera                         |
-|  |   +-- External RTSP: source RTSP -> ffmpeg transcode ->   |
-|  |       mediamtx /{robot-id}/external                       |
-|  +-- mediamtx (port 8555) -- RTSP server                     |
-|  +-- VILA JPS (port 5010 API, port 5016 WS)                  |
-|      +-- Pulls RTSP streams from mediamtx                    |
-|      +-- POST /api/v1/live-stream  (register streams)        |
-|      +-- POST /api/v1/alerts       (set alert rules)         |
-|      +-- WS :5016/api/v1/alerts/ws (receive alert events)    |
-+-------------------------------------------------------------+
+```mermaid
+graph TB
+    subgraph Browser["Browser (http://localhost:5000)"]
+        UI["SPA Dashboard<br/>Robot selector dropdown<br/>6 tabs: Patrol, Control, History,<br/>Reports, Tokens, Settings"]
+    end
+
+    subgraph Nginx["nginx (port 5000)"]
+        Static["/ → index.html (static)<br/>/static/ → CSS / JS assets"]
+        RobotProxy["/api/{robot-id}/... → proxy to backend"]
+        GlobalProxy["/api/... → proxy to robot-a (global)"]
+    end
+
+    subgraph Backends["Docker Services (shared ./data volume, SQLite WAL)"]
+        RobotA["robot-a (Flask:5000)<br/>↔ Kachaka Robot A"]
+        RobotB["robot-b (Flask:5000)<br/>↔ Kachaka Robot B"]
+        FrameHub["frame_hub<br/>gRPC poll → frame cache<br/>→ ffmpeg RTSP push"]
+        RelayMgr["relay_manager<br/>HTTP client to Jetson relay"]
+    end
+
+    subgraph Jetson["Jetson Host"]
+        Relay["relay_service.py (port 5020)<br/>ffmpeg transcode"]
+        MediaMTX["mediamtx (port 8555)<br/>RTSP server"]
+        VILA["VILA JPS<br/>API :5010 / WS :5016<br/>Prometheus :5012"]
+    end
+
+    UI -->|"/api/{robot-id}/state<br/>/api/settings"| Nginx
+    Nginx --> RobotA
+    Nginx --> RobotB
+    RobotA --- FrameHub
+    RobotA --- RelayMgr
+    FrameHub -->|"RTSP push (2fps)"| MediaMTX
+    RelayMgr -->|"HTTP"| Relay
+    Relay -->|"ffmpeg transcode"| MediaMTX
+    MediaMTX -->|"RTSP streams"| VILA
 ```
 
-**Robot camera pipeline (direct push):**
-```
-frame_hub gRPC poll -> frame cache -> ffmpeg push (2fps) -> mediamtx /{robot-id}/camera -> VILA JPS
+### Robot Camera Pipeline (direct push)
+
+```mermaid
+graph LR
+    A["frame_hub<br/>gRPC poll"] --> B["Frame Cache"] --> C["ffmpeg push<br/>(2fps)"] --> D["mediamtx<br/>/{robot-id}/camera"] --> E["VILA JPS"]
 ```
 
-**External RTSP pipeline (via relay):**
+### External RTSP Pipeline (via relay)
+
+```mermaid
+graph LR
+    A["External<br/>RTSP Source"] --> B["relay_service<br/>transcode"] --> C["mediamtx<br/>/{robot-id}/external"] --> D["VILA JPS"]
 ```
-External RTSP source -> relay service transcode -> mediamtx /{robot-id}/external -> VILA JPS
+
+### Patrol Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Flask as Flask Backend
+    participant Robot as Kachaka Robot
+    participant FrameHub as frame_hub
+    participant AI as Gemini AI
+    participant EdgeAI as VILA JPS
+    participant DB as SQLite DB
+
+    User->>Flask: POST /patrol/start
+    Flask->>DB: Create patrol_run
+    Flask->>FrameHub: start_rtsp_push()
+
+    opt Edge AI enabled
+        Flask->>EdgeAI: Register stream
+        Flask->>EdgeAI: Set alert rules
+        Flask->>EdgeAI: Connect WebSocket
+    end
+
+    loop Each Waypoint
+        Flask->>Robot: move_to(x, y, theta)
+        Robot-->>Flask: Arrival confirmed
+        FrameHub-->>Flask: Latest frame from cache
+        Flask->>AI: Analyze image (structured JSON)
+        AI-->>Flask: {is_NG, Description}
+        Flask->>DB: Save inspection_result
+    end
+
+    Flask->>AI: Generate patrol report
+    Flask->>DB: Save report
+
+    opt Telegram enabled
+        Flask->>AI: Generate Telegram message
+        Flask-->>User: Send Telegram notification + PDF
+    end
+
+    opt Edge AI enabled
+        Flask->>EdgeAI: Close WebSocket
+        Flask->>EdgeAI: Deregister stream
+    end
+
+    Flask->>FrameHub: stop_rtsp_push()
+    Flask->>DB: Update patrol_run (completed)
 ```
+
+### Request Routing
 
 - nginx regex `^/api/(robot-[^/]+)/(.*)$` strips the robot ID and proxies to the matching Docker service
 - Docker service names **must** match robot IDs (`robot-a`, `robot-b`, etc.)
@@ -129,55 +177,135 @@ Add `robot-d` to the nginx `depends_on` list, then `docker compose up -d`.
 
 ```
 visual-patrol/
-+-- nginx.conf                  # Dev reverse proxy config
-+-- docker-compose.yml          # Dev: nginx + per-robot services (bridge network)
-+-- Dockerfile                  # Backend image (Python 3.10, non-root user)
-+-- .dockerignore
-+-- src/
-|   +-- backend/
-|   |   +-- app.py              # Flask REST API (~1000 lines)
-|   |   +-- robot_service.py    # Kachaka gRPC interface
-|   |   +-- patrol_service.py   # Patrol orchestration
-|   |   +-- cloud_ai_service.py # Gemini AI integration
-|   |   +-- edge_ai_service.py  # VILA JPS live monitoring + test monitor
-|   |   +-- frame_hub.py        # Centralized gRPC poll -> frame cache -> RTSP push
-|   |   +-- relay_manager.py    # HTTP client for Jetson relay service
-|   |   +-- settings_service.py # Global settings (DB-backed)
-|   |   +-- pdf_service.py      # PDF report generation
-|   |   +-- database.py         # SQLite management + migrations
-|   |   +-- config.py           # Per-robot env config + defaults
-|   |   +-- video_recorder.py   # Video recording
-|   |   +-- utils.py            # Utilities
-|   |   +-- logger.py           # Timezone-aware logging
-|   |   +-- requirements.txt
-|   +-- frontend/
-|       +-- templates/
-|       |   +-- index.html      # SPA (static, no Jinja2)
-|       +-- static/
-|           +-- css/style.css
-|           +-- js/
-|               +-- app.js      # Entry point, tab switching, robot selector
-|               +-- state.js    # Shared state hub
-|               +-- map.js      # Canvas map rendering
-|               +-- controls.js # Manual D-pad control
-|               +-- patrol.js   # Patrol start/stop, status polling
-|               +-- points.js   # Waypoint CRUD
-|               +-- schedule.js # Scheduled patrols
-|               +-- ai.js       # AI test panel
-|               +-- history.js  # Patrol history browser
-|               +-- reports.js  # Multi-run report generation
-|               +-- settings.js # Settings panel (3 sub-tabs)
-|               +-- stats.js    # Token usage chart (millions + pricing)
-+-- data/                       # Shared runtime data (SQLite DB, images)
-+-- logs/                       # Per-robot application logs
-+-- deploy/                     # Production config (host networking)
-|   +-- docker-compose.prod.yaml
-|   +-- nginx.conf
-|   +-- relay-service/          # Jetson-side ffmpeg relay service
-|   |   +-- Dockerfile
-|   +-- vila-jps/               # VILA JPS patches
-|       +-- streaming_patched.py
-+-- .github/workflows/          # CI/CD (multi-arch build -> GHCR)
+├── nginx.conf                  # Dev reverse proxy config
+├── docker-compose.yml          # Dev: nginx + per-robot services (bridge network)
+├── Dockerfile                  # Backend image (Python 3.10, non-root user)
+├── .dockerignore
+├── src/
+│   ├── backend/
+│   │   ├── app.py              # Flask REST API (~1000 lines)
+│   │   ├── robot_service.py    # Kachaka gRPC interface
+│   │   ├── patrol_service.py   # Patrol orchestration
+│   │   ├── cloud_ai_service.py # Gemini AI integration
+│   │   ├── edge_ai_service.py  # VILA JPS live monitoring + test monitor
+│   │   ├── frame_hub.py        # Centralized gRPC poll -> frame cache -> RTSP push
+│   │   ├── relay_manager.py    # HTTP client for Jetson relay service
+│   │   ├── settings_service.py # Global settings (DB-backed)
+│   │   ├── pdf_service.py      # PDF report generation
+│   │   ├── database.py         # SQLite management + migrations
+│   │   ├── config.py           # Per-robot env config + defaults
+│   │   ├── video_recorder.py   # Video recording
+│   │   ├── utils.py            # Utilities
+│   │   ├── logger.py           # Timezone-aware logging
+│   │   └── requirements.txt
+│   └── frontend/
+│       ├── templates/
+│       │   └── index.html      # SPA (static, no Jinja2)
+│       └── static/
+│           ├── css/style.css
+│           └── js/
+│               ├── app.js      # Entry point, tab switching, robot selector
+│               ├── state.js    # Shared state hub
+│               ├── map.js      # Canvas map rendering
+│               ├── controls.js # Manual D-pad control
+│               ├── patrol.js   # Patrol start/stop, status polling
+│               ├── points.js   # Waypoint CRUD
+│               ├── schedule.js # Scheduled patrols
+│               ├── ai.js       # AI test panel
+│               ├── history.js  # Patrol history browser
+│               ├── reports.js  # Multi-run report generation
+│               ├── settings.js # Settings panel (3 sub-tabs)
+│               └── stats.js    # Token usage chart (millions + pricing)
+├── data/                       # Shared runtime data (SQLite DB, images)
+├── logs/                       # Per-robot application logs
+├── deploy/                     # Production config (host networking)
+│   ├── docker-compose.prod.yaml
+│   ├── nginx.conf
+│   ├── relay-service/          # Jetson-side ffmpeg relay service
+│   │   └── Dockerfile
+│   └── vila-jps/               # VILA JPS patches
+│       └── streaming_patched.py
+└── .github/workflows/          # CI/CD (multi-arch build -> GHCR)
+```
+
+## Database Schema
+
+```mermaid
+erDiagram
+    patrol_runs {
+        INTEGER id PK
+        TEXT start_time
+        TEXT end_time
+        TEXT status
+        TEXT robot_id
+        TEXT report_content
+        TEXT model_id
+        INTEGER input_tokens
+        INTEGER output_tokens
+        INTEGER total_tokens
+        INTEGER report_input_tokens
+        INTEGER report_output_tokens
+        INTEGER report_total_tokens
+        INTEGER telegram_input_tokens
+        INTEGER telegram_output_tokens
+        INTEGER telegram_total_tokens
+        INTEGER video_input_tokens
+        INTEGER video_output_tokens
+        INTEGER video_total_tokens
+    }
+
+    inspection_results {
+        INTEGER id PK
+        INTEGER run_id FK
+        TEXT robot_id
+        TEXT point_name
+        REAL coordinate_x
+        REAL coordinate_y
+        TEXT prompt
+        TEXT ai_response
+        INTEGER is_ng
+        TEXT image_path
+        INTEGER input_tokens
+        INTEGER output_tokens
+        INTEGER total_tokens
+    }
+
+    generated_reports {
+        INTEGER id PK
+        TEXT start_date
+        TEXT end_date
+        TEXT report_content
+        INTEGER input_tokens
+        INTEGER output_tokens
+        INTEGER total_tokens
+        TEXT robot_id
+    }
+
+    robots {
+        TEXT robot_id PK
+        TEXT robot_name
+        TEXT robot_ip
+        TEXT last_seen
+        TEXT status
+    }
+
+    global_settings {
+        TEXT key PK
+        TEXT value
+    }
+
+    edge_ai_alerts {
+        INTEGER id PK
+        INTEGER run_id FK
+        TEXT robot_id
+        TEXT rule
+        TEXT response
+        TEXT image_path
+        TEXT stream_source
+    }
+
+    patrol_runs ||--o{ inspection_results : "has"
+    patrol_runs ||--o{ edge_ai_alerts : "has"
 ```
 
 ## API Reference
@@ -287,6 +415,7 @@ Settings are stored in a shared SQLite database (`data/report/report.db`, table 
 | `ROBOT_ID` | Robot identifier (must match Docker service name) |
 | `ROBOT_NAME` | Display name |
 | `ROBOT_IP` | Kachaka robot IP:port |
+| `PORT` | Flask listening port (default 5000; set per-robot in production) |
 | `RELAY_SERVICE_URL` | Jetson relay service URL (e.g. `http://192.168.50.35:5020`); empty = relay unavailable |
 | `DATA_DIR` | Shared data directory |
 | `LOG_DIR` | Log output directory |
@@ -299,6 +428,26 @@ Settings are stored in a shared SQLite database (`data/report/report.db`, table 
 | `JETSON_MEDIAMTX_PORT` | 8555 | mediamtx RTSP port |
 
 ## Deployment
+
+### Networking Modes
+
+```mermaid
+graph TB
+    subgraph Dev["Development (Docker Bridge)"]
+        direction TB
+        DN["nginx :5000"] --> DA["robot-a :5000<br/>(internal)"]
+        DN --> DB2["robot-b :5000<br/>(internal)"]
+        note1["Docker DNS resolves<br/>service name → container IP"]
+    end
+
+    subgraph Prod["Production (Host Network)"]
+        direction TB
+        PN["nginx :5000"] --> PA["robot-a :5001"]
+        PN --> PB["robot-b :5002"]
+        PN --> PR["rtsp-relay :5020"]
+        note2["All on 127.0.0.1<br/>Each backend on unique PORT"]
+    end
+```
 
 Docker images are automatically built for **linux/amd64** and **linux/arm64** on every push to `main`.
 
