@@ -116,7 +116,17 @@ class RobotService:
         if not wait:
             return result
 
-        # Phase 2: poll for completion
+        # Phase 2: wait for command to be accepted, then poll for completion
+        # Without this, is_command_running() may return False immediately
+        # (reflecting the previous command's state) before Kachaka registers the new one.
+        for _ in range(20):  # up to 10s for command acceptance
+            try:
+                if self.client.is_command_running():
+                    break
+            except Exception as e:
+                logger.warning(f"move_to (accept): {e}")
+            time.sleep(COMMAND_POLL_INTERVAL)
+
         while True:
             try:
                 if not self.client.is_command_running():
@@ -145,7 +155,15 @@ class RobotService:
                 logger.warning(f"return_home (send): {e}")
                 time.sleep(SEND_RETRY_INTERVAL)
 
-        # Phase 2: poll for completion
+        # Phase 2: wait for command acceptance, then poll for completion
+        for _ in range(20):
+            try:
+                if self.client.is_command_running():
+                    break
+            except Exception as e:
+                logger.warning(f"return_home (accept): {e}")
+            time.sleep(COMMAND_POLL_INTERVAL)
+
         while True:
             try:
                 if not self.client.is_command_running():
