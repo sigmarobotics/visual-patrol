@@ -630,7 +630,8 @@ class PatrolService:
             img_path = os.path.join(run_images_dir, f"{safe_name}_processing_{img_uuid}.jpg")
             image.save(img_path)
 
-            user_prompt = point.get('prompt', 'Is everything normal?')
+            raw_prompt = point.get('prompt', 'Is everything normal?')
+            user_prompt = f"[Location: {point_name}] {raw_prompt}"
             sys_prompt = settings.get('system_prompt', '')
 
             if turbo_mode:
