@@ -14,6 +14,8 @@ services:
   robot-a:
     container_name: visual_patrol_robot_a
     build: .
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     volumes:
       - ./src:/app/src
       - ./data:/app/data
