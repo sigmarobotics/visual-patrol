@@ -127,21 +127,24 @@ function updateStatsSummary(data) {
     const totalOutput = data.reduce((sum, d) => sum + d.output, 0);
     const totalAll = data.reduce((sum, d) => sum + d.total, 0);
 
+    const outputAndThinking = totalAll - totalInput;
     const inputCost = (totalInput / 1_000_000 * 0.5).toFixed(2);
-    const outputCost = (totalOutput / 1_000_000 * 3).toFixed(2);
+    const outputCost = (outputAndThinking / 1_000_000 * 3).toFixed(2);
     const totalCost = (parseFloat(inputCost) + parseFloat(outputCost)).toFixed(2);
 
     const summaryEl = document.getElementById('stats-summary');
     if (summaryEl) {
+        summaryEl.style.position = 'relative';
         summaryEl.innerHTML = `
+            <span style="position:absolute; top:8px; right:12px; font-size:11px; color:var(--text-muted);">Unit: USD</span>
             <div class="stat-item">
                 <span class="stat-label">Input Tokens</span>
                 <span class="stat-value" style="color: #28a745;">${toMillions(totalInput)} M</span>
                 <span style="display:block; font-size:11px; color:var(--text-muted); margin-top:2px;">$0.50 / 1M &rarr; $${inputCost}</span>
             </div>
             <div class="stat-item">
-                <span class="stat-label">Output Tokens</span>
-                <span class="stat-value" style="color: #e67e22;">${toMillions(totalOutput)} M</span>
+                <span class="stat-label">Output + Thinking</span>
+                <span class="stat-value" style="color: #e67e22;">${toMillions(outputAndThinking)} M</span>
                 <span style="display:block; font-size:11px; color:var(--text-muted); margin-top:2px;">$3.00 / 1M &rarr; $${outputCost}</span>
             </div>
             <div class="stat-item">
