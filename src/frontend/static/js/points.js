@@ -77,6 +77,9 @@ export function initPoints() {
     window.setHighlight = setHighlight;
     window.clearHighlight = clearHighlight;
     window.testPoint = testPoint;
+    window.enableAllPoints = enableAllPoints;
+    window.disableAllPoints = disableAllPoints;
+    window.optimizeRoute = optimizeRoute;
 }
 
 export async function loadPoints() {
@@ -234,6 +237,33 @@ async function movePoint(index, direction) {
         return;
     }
 
+    renderPointsTable();
+    await saveAllPoints();
+}
+
+async function enableAllPoints() {
+    state.currentPatrolPoints.forEach(p => { p.enabled = true; });
+    renderPointsTable();
+    await saveAllPoints();
+}
+
+async function disableAllPoints() {
+    state.currentPatrolPoints.forEach(p => { p.enabled = false; });
+    renderPointsTable();
+    await saveAllPoints();
+}
+
+async function optimizeRoute(direction) {
+    const sortFns = {
+        'bottom-to-top': (a, b) => a.y - b.y,
+        'top-to-bottom': (a, b) => b.y - a.y,
+        'left-to-right': (a, b) => a.x - b.x,
+        'right-to-left': (a, b) => b.x - a.x,
+    };
+    const fn = sortFns[direction];
+    if (!fn) return;
+
+    state.currentPatrolPoints.sort(fn);
     renderPointsTable();
     await saveAllPoints();
 }
