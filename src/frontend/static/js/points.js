@@ -80,6 +80,9 @@ export function initPoints() {
     window.enableAllPoints = enableAllPoints;
     window.disableAllPoints = disableAllPoints;
     window.optimizeRoute = optimizeRoute;
+    window.saveCurrentRoute = saveCurrentRoute;
+    window.loadSelectedRoute = loadSelectedRoute;
+    window.deleteSelectedRoute = deleteSelectedRoute;
 }
 
 export async function loadPoints() {
@@ -87,6 +90,7 @@ export async function loadPoints() {
     const res = await fetch(`/api/${state.selectedRobotId}/points`);
     state.currentPatrolPoints = await res.json();
     renderPointsTable();
+    loadRouteList();
 }
 
 function renderPointsTable() {
@@ -266,6 +270,111 @@ async function optimizeRoute(direction) {
     state.currentPatrolPoints.sort(fn);
     renderPointsTable();
     await saveAllPoints();
+}
+
+async function loadRouteList() {
+    if (!state.selectedRobotId) return;
+    try {
+        const res = await fetch(`/api/${state.selectedRobotId}/points/routes`);
+        const routes = await res.json();
+        const select = document.getElementById('route-select');
+        if (!select) return;
+
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">-- Saved Routes --</option>';
+        routes.forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            select.appendChild(opt);
+        });
+        if (currentVal && routes.includes(currentVal)) {
+            select.value = currentVal;
+        }
+    } catch (e) {
+        console.error('Failed to load route list:', e);
+    }
+}
+
+async function saveCurrentRoute() {
+    const name = prompt('Enter route name (alphanumeric, hyphen, underscore):');
+    if (!name || !name.trim()) return;
+    const cleanName = name.trim();
+
+    if (!/^[\w\-]+$/.test(cleanName)) {
+        alert('Invalid name. Use alphanumeric, underscore, or hyphen only.');
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/${state.selectedRobotId}/points/routes/${cleanName}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(state.currentPatrolPoints)
+        });
+        const data = await res.json();
+        if (res.ok) {
+            await loadRouteList();
+            const select = document.getElementById('route-select');
+            if (select) select.value = cleanName;
+        } else {
+            alert('Save failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Save error: ' + e.message);
+    }
+}
+
+async function loadSelectedRoute() {
+    const select = document.getElementById('route-select');
+    if (!select || !select.value) {
+        alert('Please select a route to load.');
+        return;
+    }
+
+    if (!confirm(`Load route "${select.value}"? This will replace the current patrol points.`)) return;
+
+    try {
+        const res = await fetch(`/api/${state.selectedRobotId}/points/routes/${select.value}`);
+        if (!res.ok) {
+            alert('Failed to load route.');
+            return;
+        }
+        const points = await res.json();
+
+        await fetch(`/api/${state.selectedRobotId}/points/reorder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(points)
+        });
+
+        await loadPoints();
+    } catch (e) {
+        alert('Load error: ' + e.message);
+    }
+}
+
+async function deleteSelectedRoute() {
+    const select = document.getElementById('route-select');
+    if (!select || !select.value) {
+        alert('Please select a route to delete.');
+        return;
+    }
+
+    if (!confirm(`Delete route "${select.value}"?`)) return;
+
+    try {
+        const res = await fetch(`/api/${state.selectedRobotId}/points/routes/${select.value}`, {
+            method: 'DELETE'
+        });
+        if (res.ok) {
+            await loadRouteList();
+        } else {
+            alert('Delete failed.');
+        }
+    } catch (e) {
+        alert('Delete error: ' + e.message);
+    }
 }
 
 function setHighlight(id) {
