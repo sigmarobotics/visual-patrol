@@ -66,11 +66,6 @@ window.toggleHistoryLog = function () {
     if (frame) frame.classList.toggle('collapsed');
 };
 
-window.togglePatrolRoute = function () {
-    const frame = document.getElementById('patrol-route-frame');
-    if (frame) frame.classList.toggle('collapsed');
-};
-
 window.toggleSchedulePanel = function () {
     const frame = document.getElementById('schedule-frame');
     if (frame) frame.classList.toggle('collapsed');
@@ -84,6 +79,20 @@ window.toggleAITestPanel = function () {
 window.togglePatrolPointsPanel = function () {
     const frame = document.getElementById('patrol-points-frame');
     if (frame) frame.classList.toggle('collapsed');
+};
+
+window.switchControlTab = function (tabName) {
+    document.querySelectorAll('.control-tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.control-tab-btn').forEach(el => el.classList.remove('active'));
+
+    const target = document.getElementById(`control-tab-${tabName}`);
+    if (target) target.classList.add('active');
+
+    document.querySelectorAll('.control-tab-btn').forEach(btn => {
+        if (btn.textContent.trim().toLowerCase() === tabName) {
+            btn.classList.add('active');
+        }
+    });
 };
 
 window.toggleFrontCameraPanel = function () {

@@ -95,84 +95,141 @@
                         </div>
                     </div>
 
-                    <!-- RIGHT: CAMERA, AI, POINTS -->
-                    <div class="right-panel">
+                    <!-- RIGHT: SUB-TABBED PANEL -->
+                    <div class="right-panel" style="display: flex; flex-direction: column;">
                         <div class="header">
-                            <h2>Control & Monitor</h2>
+                            <h2>Control &amp; Monitor</h2>
                         </div>
 
-                        <!-- Camera Feed (Collapsible) -->
-                        <div class="monitor-frame collapsible" id="front-camera-frame">
-                            <div class="frame-header" onclick="toggleFrontCameraPanel()">
-                                <h4>Front Camera <span id="front-camera-toggle" class="toggle-icon">▼</span></h4>
-                            </div>
-                            <div class="frame-content" id="front-camera-content">
-                                <img id="front-camera-img" alt="Robot Camera Feed"
-                                    style="width: 100%; display: block;" />
-                            </div>
+                        <!-- Control Sub-Tabs -->
+                        <div class="control-tabs">
+                            <button class="control-tab-btn active" onclick="switchControlTab('monitor')">Monitor</button>
+                            <button class="control-tab-btn" onclick="switchControlTab('route')">Route</button>
+                            <button class="control-tab-btn" onclick="switchControlTab('points')">Points</button>
                         </div>
 
-                        <!-- AI Test Section (Collapsible) -->
-                        <div class="monitor-frame collapsible" id="ai-test-frame">
-                            <div class="frame-header" onclick="toggleAITestPanel()">
-                                <h4>AI Recognition Test <span id="ai-test-toggle" class="toggle-icon">▼</span></h4>
-                            </div>
-                            <div class="frame-content" id="ai-test-content">
-                                <div style="display: flex; gap: 8px; padding: 12px;">
-                                    <input type="text" id="ai-test-prompt-input"
-                                        placeholder="Enter prompt (e.g. 'Is there a fire?')" style="flex: 1;">
-                                    <button id="btn-test-ai" class="btn-premium"
-                                        style="width: auto; padding: 10px 20px;">
-                                        <span class="icon">◉</span> Test
-                                    </button>
+                        <!-- Sub-Tab: Monitor -->
+                        <div id="control-tab-monitor" class="control-tab-content active">
+                            <!-- Camera Feed (Collapsible) -->
+                            <div class="monitor-frame collapsible" id="front-camera-frame">
+                                <div class="frame-header" onclick="toggleFrontCameraPanel()">
+                                    <h4>Front Camera <span id="front-camera-toggle" class="toggle-icon">▼</span></h4>
                                 </div>
+                                <div class="frame-content" id="front-camera-content">
+                                    <img id="front-camera-img" alt="Robot Camera Feed"
+                                        style="width: 100%; display: block;" />
+                                </div>
+                            </div>
 
-                                <div class="ai-output-container">
-                                    <div style="margin-bottom: 8px;">
-                                        <span
-                                            style="color: var(--cyan-dim); font-weight: 600; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;">Prompt:</span>
-                                        <span id="ai-output-prompt"
-                                            style="color: var(--text-muted); font-style: italic; margin-left: 8px;">-</span>
+                            <!-- AI Test Section (Collapsible) -->
+                            <div class="monitor-frame collapsible" id="ai-test-frame">
+                                <div class="frame-header" onclick="toggleAITestPanel()">
+                                    <h4>AI Recognition Test <span id="ai-test-toggle" class="toggle-icon">▼</span></h4>
+                                </div>
+                                <div class="frame-content" id="ai-test-content">
+                                    <div style="display: flex; gap: 8px; padding: 12px;">
+                                        <input type="text" id="ai-test-prompt-input"
+                                            placeholder="Enter prompt (e.g. 'Is there a fire?')" style="flex: 1;">
+                                        <button id="btn-test-ai" class="btn-premium"
+                                            style="width: auto; padding: 10px 20px;">
+                                            <span class="icon">◉</span> Test
+                                        </button>
                                     </div>
-                                    <div>
-                                        <span
-                                            style="color: var(--green-ok); font-weight: 600; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;">Result:</span>
-                                        <div id="ai-output-result" style="margin-top: 8px;">-</div>
+
+                                    <div class="ai-output-container">
+                                        <div style="margin-bottom: 8px;">
+                                            <span
+                                                style="color: var(--cyan-dim); font-weight: 600; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;">Prompt:</span>
+                                            <span id="ai-output-prompt"
+                                                style="color: var(--text-muted); font-style: italic; margin-left: 8px;">-</span>
+                                        </div>
+                                        <div>
+                                            <span
+                                                style="color: var(--green-ok); font-weight: 600; font-size: 10px; letter-spacing: 1px; text-transform: uppercase;">Result:</span>
+                                            <div id="ai-output-result" style="margin-top: 8px;">-</div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Patrol Points Section (Collapsible) -->
-                        <div class="monitor-frame collapsible" id="patrol-points-frame">
-                            <div class="frame-header" onclick="togglePatrolPointsPanel()"
-                                style="display: flex; justify-content: space-between; align-items: center;">
-                                <h4>Patrol Points <span id="patrol-points-toggle" class="toggle-icon">▼</span></h4>
-                                <div style="display: flex; gap: 6px; flex-wrap: wrap;"
-                                    onclick="event.stopPropagation();">
-                                    <button id="btn-save-points">SAVE</button>
-                                    <button class="btn-secondary" id="btn-get-robot-locations"
-                                        title="Import locations from robot">
-                                        <span style="font-size: 12px;">🤖</span> From Robot
-                                    </button>
-                                    <button class="btn-secondary" id="btn-export-points">Export</button>
-                                    <button class="btn-secondary" id="btn-import-points">Import</button>
-                                    <button class="btn-secondary" id="btn-add-point-quick">+ Add Here</button>
+                        <!-- Sub-Tab: Route -->
+                        <div id="control-tab-route" class="control-tab-content">
+                            <div class="monitor-frame" id="patrol-route-frame">
+                                <div class="frame-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <h4>Patrol Route</h4>
+                                    <div style="display: flex; gap: 6px; align-items: center;">
+                                        <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="enableAllPoints()">All On</button>
+                                        <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="disableAllPoints()">All Off</button>
+                                        <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" id="btn-toggle-show-points" onclick="toggleShowPoints()" title="Show/Hide points on map">Map: ON</button>
+                                    </div>
                                 </div>
-                                <input type="file" id="import-file-input" style="display:none" accept=".json">
+                                <div class="frame-content" id="patrol-route-content">
+                                    <!-- Route Optimization Bar -->
+                                    <div style="display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); align-items: center; flex-wrap: wrap;">
+                                        <span style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">Sort:</span>
+                                        <button class="btn-secondary" style="padding: 3px 8px; font-size: 0.75rem;" onclick="optimizeRoute('bottom-to-top')">↑ Y Asc</button>
+                                        <button class="btn-secondary" style="padding: 3px 8px; font-size: 0.75rem;" onclick="optimizeRoute('top-to-bottom')">↓ Y Desc</button>
+                                        <button class="btn-secondary" style="padding: 3px 8px; font-size: 0.75rem;" onclick="optimizeRoute('left-to-right')">→ X Asc</button>
+                                        <button class="btn-secondary" style="padding: 3px 8px; font-size: 0.75rem;" onclick="optimizeRoute('right-to-left')">← X Desc</button>
+                                    </div>
+
+                                    <!-- Route Save/Load Bar -->
+                                    <div style="display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); align-items: center;">
+                                        <select id="route-select" style="flex: 1; padding: 4px 8px; font-size: 0.8rem;">
+                                            <option value="">-- Saved Routes --</option>
+                                        </select>
+                                        <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="loadSelectedRoute()">Load</button>
+                                        <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;" onclick="saveCurrentRoute()">Save</button>
+                                        <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem; color: #dc3545;" onclick="deleteSelectedRoute()">Del</button>
+                                    </div>
+
+                                    <!-- Points Table -->
+                                    <table class="data-table" id="patrol-view-points-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Location</th>
+                                                <th style="width: 60px;">Active</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
                             </div>
-                            <div class="frame-content" id="patrol-points-content">
-                                <table class="data-table" id="points-table-quick">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                            <th style="width: 40%;">Prompt</th>
-                                            <th>Test</th>
-                                            <th>Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
+                        </div>
+
+                        <!-- Sub-Tab: Points -->
+                        <div id="control-tab-points" class="control-tab-content">
+                            <div class="monitor-frame collapsible" id="patrol-points-frame">
+                                <div class="frame-header" onclick="togglePatrolPointsPanel()"
+                                    style="display: flex; justify-content: space-between; align-items: center;">
+                                    <h4>Patrol Points <span id="patrol-points-toggle" class="toggle-icon">▼</span></h4>
+                                    <div style="display: flex; gap: 6px; flex-wrap: wrap;"
+                                        onclick="event.stopPropagation();">
+                                        <button id="btn-save-points">SAVE</button>
+                                        <button class="btn-secondary" id="btn-get-robot-locations"
+                                            title="Import locations from robot">
+                                            <span style="font-size: 12px;">🤖</span> From Robot
+                                        </button>
+                                        <button class="btn-secondary" id="btn-export-points">Export</button>
+                                        <button class="btn-secondary" id="btn-import-points">Import</button>
+                                        <button class="btn-secondary" id="btn-add-point-quick">+ Add Here</button>
+                                    </div>
+                                    <input type="file" id="import-file-input" style="display:none" accept=".json">
+                                </div>
+                                <div class="frame-content" id="patrol-points-content">
+                                    <table class="data-table" id="points-table-quick">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th style="width: 40%;">Prompt</th>
+                                                <th>Test</th>
+                                                <th>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -231,24 +288,6 @@
                             <div class="frame-content" id="robot-vision-content">
                                 <img id="robot-vision-img" alt="Robot Camera Feed"
                                     style="width: 100%; display: block;" />
-                            </div>
-                        </div>
-
-                        <!-- Patrol Route Frame -->
-                        <div class="monitor-frame collapsible" id="patrol-route-frame">
-                            <div class="frame-header" onclick="togglePatrolRoute()">
-                                <h4>Patrol Route <span id="patrol-route-toggle" class="toggle-icon">▼</span></h4>
-                            </div>
-                            <div class="frame-content" id="patrol-route-content">
-                                <table class="data-table" id="patrol-view-points-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Location</th>
-                                            <th style="width: 60px;">Active</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
                             </div>
                         </div>
 

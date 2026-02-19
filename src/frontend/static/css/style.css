@@ -1595,6 +1595,64 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
     display: block;
 }
 
+/* Control Sub-Tabs */
+.control-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 12px;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--panel-dark);
+}
+
+.control-tab-btn {
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    padding: 10px 16px;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s, background 0.2s;
+}
+
+.control-tab-btn:hover {
+    color: var(--text-secondary);
+    background: var(--amber-subtle);
+}
+
+.control-tab-btn.active {
+    color: var(--amber);
+    background: var(--amber-subtle);
+}
+
+.control-tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--amber);
+}
+
+.control-tab-content {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.control-tab-content.active {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
 .settings-column {
     display: flex;
     flex-direction: column;
