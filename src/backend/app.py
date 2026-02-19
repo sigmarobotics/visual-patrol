@@ -503,6 +503,47 @@ def get_points_from_robot():
         logging.error(f"Error fetching locations from robot: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/points/routes', methods=['GET'])
+def list_routes():
+    """List all saved route configurations."""
+    routes = []
+    if os.path.exists(ROUTES_DIR):
+        for f in sorted(os.listdir(ROUTES_DIR)):
+            if f.endswith('.json'):
+                routes.append(f[:-5])  # strip .json
+    return jsonify(routes)
+
+
+@app.route('/api/points/routes/<name>', methods=['GET', 'PUT', 'DELETE'])
+def handle_route(name):
+    """Get, save, or delete a named route configuration."""
+    if not re.match(r'^[\w\-]+$', name):
+        return jsonify({"error": "Invalid route name. Use alphanumeric, underscore, or hyphen only."}), 400
+
+    route_file = os.path.join(ROUTES_DIR, f"{name}.json")
+
+    if request.method == 'GET':
+        if not os.path.exists(route_file):
+            return jsonify({"error": "Route not found"}), 404
+        points = load_json(route_file, [])
+        return jsonify(points)
+
+    elif request.method == 'PUT':
+        points = request.json
+        if not isinstance(points, list):
+            return jsonify({"error": "Expected a list of points"}), 400
+        try:
+            save_json(route_file, points)
+            return jsonify({"status": "saved", "name": name})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    elif request.method == 'DELETE':
+        if os.path.exists(route_file):
+            os.remove(route_file)
+            return jsonify({"status": "deleted"})
+        return jsonify({"error": "Route not found"}), 404
+
 @app.route('/api/patrol/status', methods=['GET'])
 def get_patrol_status_route():
     return jsonify(patrol_service.get_status())

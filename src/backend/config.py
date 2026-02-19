@@ -30,6 +30,7 @@ ROBOT_IMAGES_DIR = os.path.join(ROBOT_DATA_DIR, "report", "images")
 
 POINTS_FILE = os.path.join(ROBOT_CONFIG_DIR, "points.json")
 SCHEDULE_FILE = os.path.join(ROBOT_CONFIG_DIR, "patrol_schedule.json")
+ROUTES_DIR = os.path.join(ROBOT_CONFIG_DIR, "routes")
 
 # Legacy paths (for migration)
 _LEGACY_CONFIG_DIR = os.path.join(DATA_DIR, "config")
@@ -110,6 +111,7 @@ def ensure_dirs():
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(ROBOT_CONFIG_DIR, exist_ok=True)
     os.makedirs(ROBOT_IMAGES_DIR, exist_ok=True)
+    os.makedirs(ROUTES_DIR, exist_ok=True)
 
 
 def migrate_legacy_files():
