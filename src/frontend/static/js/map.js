@@ -83,7 +83,7 @@ export function draw() {
     ctx.drawImage(state.mapImage, 0, 0);
 
     // Draw Patrol Points
-    if (state.mapInfo && state.currentPatrolPoints) {
+    if (state.showPointsOnMap && state.mapInfo && state.currentPatrolPoints) {
         state.currentPatrolPoints.forEach(p => {
             const u = worldToPixelX(p.x);
             const v = worldToPixelY(p.y);

@@ -95,6 +95,12 @@ window.switchControlTab = function (tabName) {
     });
 };
 
+window.toggleShowPoints = function () {
+    state.showPointsOnMap = !state.showPointsOnMap;
+    const btn = document.getElementById('btn-toggle-show-points');
+    if (btn) btn.textContent = state.showPointsOnMap ? 'Map: ON' : 'Map: OFF';
+};
+
 window.toggleFrontCameraPanel = function () {
     const frame = document.getElementById('front-camera-frame');
     if (frame) frame.classList.toggle('collapsed');

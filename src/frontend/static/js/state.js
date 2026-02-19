@@ -14,6 +14,7 @@ const state = {
 
     currentPatrolPoints: [],
     highlightedPoint: null,
+    showPointsOnMap: true,
 
     currentSettingsTimezone: 'UTC',
     currentIdleStreamEnabled: true,
