@@ -1,6 +1,6 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://shnrmpapyfgorcccciqw.supabase.co';
-const SUPABASE_ANON_KEY = '__SUPABASE_ANON_KEY__'; // placeholder — replaced at deploy time
+const SUPABASE_ANON_KEY = 'sb_publishable_81nkEf7V3kWWaG7oqLc7wA_SuhIZNEw';
 const VERIFY_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/verify-share`;
 
 // ─── Module-level state ────────────────────────────────────────────────────────
