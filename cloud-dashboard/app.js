@@ -134,7 +134,10 @@ async function showDashboard(siteName) {
   document.getElementById('dashboard').hidden = false;
 
   if (siteName) {
-    document.getElementById('header-title').textContent = `Visual Patrol — ${siteName}`;
+    const titleEl = document.getElementById('header-title');
+    const logoImg = titleEl.querySelector('.header-logo');
+    titleEl.textContent = `Visual Patrol — ${siteName}`;
+    if (logoImg) titleEl.prepend(logoImg);
     document.title = `Visual Patrol — ${siteName}`;
   }
 
@@ -505,6 +508,7 @@ function init() {
   if (!shareToken) {
     document.getElementById('auth-screen').innerHTML = `
       <div class="auth-card">
+        <img src="/favicon.png" alt="logo" class="auth-logo" />
         <h1 class="auth-title">Visual Patrol</h1>
         <p class="auth-error" style="display:block">Invalid link. Please use the share URL you were provided.</p>
       </div>
