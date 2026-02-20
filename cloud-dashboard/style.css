@@ -49,6 +49,8 @@ a { color: var(--primary); }
   background: var(--bg);
 }
 
+#auth-screen[hidden] { display: none; }
+
 .auth-card {
   background: var(--card-bg);
   border-radius: var(--radius);
