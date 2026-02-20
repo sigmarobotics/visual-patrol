@@ -332,6 +332,11 @@ def _run_migrations(cursor):
         ('robot_id', 'inspection_results', ['robot_id TEXT']),
         ('robot_id', 'generated_reports', ['robot_id TEXT']),
         ('stream_source', 'edge_ai_alerts', ['stream_source TEXT']),
+        # Cloud sync tracking
+        ('sync_status', 'patrol_runs', ['sync_status TEXT']),
+        ('sync_status', 'inspection_results', ['sync_status TEXT']),
+        ('sync_status', 'generated_reports', ['sync_status TEXT']),
+        ('sync_status', 'edge_ai_alerts', ['sync_status TEXT']),
     ]
 
     for check_col, table, columns in migrations:

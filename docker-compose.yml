@@ -28,6 +28,10 @@ services:
       - ROBOT_NAME=Robot A
       - ROBOT_IP=192.168.50.133:26400
       - RELAY_SERVICE_URL=http://192.168.50.35:5020
+      - SUPABASE_URL=
+      - SUPABASE_KEY=
+      - SITE_ID=
+      - CLOUD_DASHBOARD_URL=
     restart: unless-stopped
 
   # robot-b:
