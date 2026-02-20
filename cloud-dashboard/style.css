@@ -287,6 +287,10 @@ a { color: var(--primary); }
   overflow-y: auto;
 }
 
+.modal-overlay[hidden] {
+  display: none;
+}
+
 .modal-box {
   background: var(--card-bg);
   border-radius: var(--radius);
@@ -527,6 +531,10 @@ a { color: var(--primary); }
   font-size: 0.8rem;
   color: var(--muted);
   z-index: 50;
+}
+
+.realtime-indicator[hidden] {
+  display: none;
 }
 
 .realtime-dot {
