@@ -169,7 +169,6 @@ def sync_run(run_id):
                 "output_tokens": insp.get("output_tokens", 0) or 0,
                 "total_tokens": insp.get("total_tokens", 0) or 0,
                 "timestamp": insp.get("timestamp"),
-                "robot_moving_status": insp.get("robot_moving_status"),
             }
             client.table("inspection_results").upsert(
                 insp_payload, on_conflict="site_id,local_id"
@@ -270,7 +269,7 @@ def sync_robot_status(robot_id, robot_name, is_connected):
             "site_id": SITE_ID,
             "robot_id": robot_id,
             "robot_name": robot_name,
-            "is_connected": is_connected,
+            "status": "online" if is_connected else "offline",
             "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
         }
         client.table("robots").upsert(
