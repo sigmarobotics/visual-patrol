@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Visual Patrol</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <!-- Auth Screen -->
+  <div id="auth-screen">
+    <div class="auth-card">
+      <h1 class="auth-title">Visual Patrol</h1>
+      <p class="auth-subtitle">Enter the password to access this patrol dashboard.</p>
+      <input
+        type="password"
+        id="password-input"
+        class="auth-input"
+        placeholder="Password"
+        autocomplete="current-password"
+      />
+      <button id="auth-submit" class="auth-btn">Access Dashboard</button>
+      <p id="auth-error" class="auth-error" hidden></p>
+    </div>
+  </div>
+
+  <!-- Dashboard (hidden until authenticated) -->
+  <div id="dashboard" hidden>
+
+    <!-- Header -->
+    <header class="dashboard-header">
+      <div class="container header-inner">
+        <span class="header-title" id="header-title">Visual Patrol</span>
+        <nav class="tab-nav">
+          <button class="tab active" data-tab="history">History</button>
+          <button class="tab" data-tab="reports">Reports</button>
+          <button class="tab" data-tab="tokens">Tokens</button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="container main-content">
+
+      <!-- History Tab -->
+      <div class="tab-content" id="tab-history">
+        <div class="tab-toolbar">
+          <label for="history-robot-filter">Robot:</label>
+          <select id="history-robot-filter" class="filter-select">
+            <option value="">All robots</option>
+          </select>
+        </div>
+        <div id="history-list" class="card-list">
+          <p class="state-loading">Loading history...</p>
+        </div>
+      </div>
+
+      <!-- Reports Tab -->
+      <div class="tab-content" id="tab-reports" hidden>
+        <div id="reports-list" class="card-list">
+          <p class="state-loading">Loading reports...</p>
+        </div>
+      </div>
+
+      <!-- Tokens Tab -->
+      <div class="tab-content" id="tab-tokens" hidden>
+        <div class="tab-toolbar">
+          <label for="tokens-date-from">From:</label>
+          <input type="date" id="tokens-date-from" class="date-input" />
+          <label for="tokens-date-to">To:</label>
+          <input type="date" id="tokens-date-to" class="date-input" />
+          <label for="tokens-robot-filter">Robot:</label>
+          <select id="tokens-robot-filter" class="filter-select">
+            <option value="">All robots</option>
+          </select>
+          <button id="tokens-load-btn" class="load-btn">Load</button>
+        </div>
+        <div class="chart-container">
+          <canvas id="tokens-chart"></canvas>
+        </div>
+      </div>
+
+    </main><!-- /.container -->
+
+  </div><!-- /#dashboard -->
+
+  <!-- Run Detail Modal -->
+  <div id="run-modal" class="modal-overlay" hidden>
+    <div class="modal-box">
+      <button id="modal-close" class="modal-close" aria-label="Close">&times;</button>
+      <div id="modal-content" class="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- Real-time indicator -->
+  <div id="realtime-indicator" class="realtime-indicator" hidden>
+    <span class="realtime-dot"></span>
+    Live updates active
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
