@@ -137,7 +137,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       case "token-stats": {
         let query = supabase
           .from("patrol_runs")
-          .select("robot_id, start_time, inspection_input_tokens, inspection_output_tokens, report_input_tokens, report_output_tokens, telegram_input_tokens, telegram_output_tokens, video_input_tokens, video_output_tokens")
+          .select("start_time, input_tokens, output_tokens, total_tokens")
           .eq("site_id", siteId)
           .not("start_time", "is", null);
         if (params?.robot_id) query = query.eq("robot_id", params.robot_id);
@@ -146,7 +146,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
         query = query.order("start_time");
         const { data, error } = await query;
         if (error) return jsonResponse({ error: error.message }, 500);
-        return jsonResponse(data);
+
+        // Aggregate by date (same as local /api/stats/token_usage)
+        const byDate: Record<string, { date: string; input: number; output: number; total: number }> = {};
+        for (const row of data ?? []) {
+          const date = row.start_time.slice(0, 10);
+          if (!byDate[date]) byDate[date] = { date, input: 0, output: 0, total: 0 };
+          byDate[date].input += row.input_tokens ?? 0;
+          byDate[date].output += row.output_tokens ?? 0;
+          byDate[date].total += row.total_tokens ?? 0;
+        }
+        return jsonResponse(Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date)));
       }
 
       default:

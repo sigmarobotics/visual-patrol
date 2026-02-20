@@ -106,6 +106,10 @@ def sync_run(run_id):
             )
             alerts = [dict(r) for r in cursor.fetchall()]
 
+        # Aggregate inspection tokens from inspection_results
+        insp_in = sum(i.get("input_tokens", 0) or 0 for i in inspections)
+        insp_out = sum(i.get("output_tokens", 0) or 0 for i in inspections)
+
         # Build patrol_run payload for Supabase upsert
         run_payload = {
             "local_id": run["id"],
@@ -119,6 +123,9 @@ def sync_run(run_id):
             "input_tokens": run.get("input_tokens", 0) or 0,
             "output_tokens": run.get("output_tokens", 0) or 0,
             "total_tokens": run.get("total_tokens", 0) or 0,
+            "inspection_input_tokens": insp_in,
+            "inspection_output_tokens": insp_out,
+            "inspection_total_tokens": insp_in + insp_out,
             "report_input_tokens": run.get("report_input_tokens", 0) or 0,
             "report_output_tokens": run.get("report_output_tokens", 0) or 0,
             "report_total_tokens": run.get("report_total_tokens", 0) or 0,

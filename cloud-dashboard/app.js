@@ -370,6 +370,10 @@ function renderReportCard(report) {
 
 // ─── Token stats tab ──────────────────────────────────────────────────────────
 
+function toMillions(n) {
+  return (n / 1_000_000).toFixed(2);
+}
+
 async function loadTokenStats() {
   const fromDate = document.getElementById('tokens-date-from').value;
   const toDate = document.getElementById('tokens-date-to').value;
@@ -381,39 +385,63 @@ async function loadTokenStats() {
     if (toDate) params.date_to = toDate;
     if (robotFilter) params.robot_id = robotFilter;
 
-    const runs = await apiCall('token-stats', params);
+    // API returns date-aggregated { date, input, output, total }
+    const data = await apiCall('token-stats', params);
 
-    const byDate = {};
-    for (const run of runs) {
-      const date = run.start_time.slice(0, 10);
-      if (!byDate[date]) byDate[date] = { inspection: 0, report: 0, telegram: 0, video: 0 };
-      const g = byDate[date];
-
-      const inspToks = (run.inspection_input_tokens ?? 0) + (run.inspection_output_tokens ?? 0);
-      const reportToks = (run.report_input_tokens ?? 0) + (run.report_output_tokens ?? 0);
-      const telegramToks = (run.telegram_input_tokens ?? 0) + (run.telegram_output_tokens ?? 0);
-      const videoToks = (run.video_input_tokens ?? 0) + (run.video_output_tokens ?? 0);
-
-      g.inspection += inspToks;
-      g.report += reportToks;
-      g.telegram += telegramToks;
-      g.video += videoToks;
+    // Fill missing dates in range
+    const filledData = [];
+    if (fromDate && toDate) {
+      const dataMap = {};
+      data.forEach(d => { dataMap[d.date] = d; });
+      const cur = new Date(fromDate);
+      const end = new Date(toDate);
+      end.setHours(23, 59, 59, 999);
+      while (cur <= end) {
+        const ds = cur.toISOString().slice(0, 10);
+        filledData.push(dataMap[ds] || { date: ds, input: 0, output: 0, total: 0 });
+        cur.setDate(cur.getDate() + 1);
+      }
+    } else {
+      filledData.push(...data);
     }
 
-    const labels = Object.keys(byDate).sort();
-    renderTokenChart(
-      labels,
-      labels.map(d => byDate[d].inspection),
-      labels.map(d => byDate[d].report),
-      labels.map(d => byDate[d].telegram),
-      labels.map(d => byDate[d].video)
-    );
+    renderTokenChart(filledData);
+    updateTokensSummary(filledData);
   } catch (error) {
     console.error('loadTokenStats error:', error);
   }
 }
 
-function renderTokenChart(labels, inspectionData, reportData, telegramData, videoData) {
+function updateTokensSummary(data) {
+  const totalInput = data.reduce((s, d) => s + d.input, 0);
+  const totalAll = data.reduce((s, d) => s + d.total, 0);
+  const outputAndThinking = totalAll - totalInput;
+  const inputCost = (totalInput / 1_000_000 * 0.5).toFixed(2);
+  const outputCost = (outputAndThinking / 1_000_000 * 3).toFixed(2);
+  const totalCost = (parseFloat(inputCost) + parseFloat(outputCost)).toFixed(2);
+
+  const el = document.getElementById('tokens-summary');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="stat-item">
+      <span class="stat-label">Input Tokens</span>
+      <span class="stat-value" style="color:#28a745">${toMillions(totalInput)} M</span>
+      <span class="stat-detail">$0.50 / 1M &rarr; $${inputCost}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Output + Thinking</span>
+      <span class="stat-value" style="color:#e67e22">${toMillions(outputAndThinking)} M</span>
+      <span class="stat-detail">$3.00 / 1M &rarr; $${outputCost}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Total Tokens</span>
+      <span class="stat-value" style="color:#007bff">${toMillions(totalAll)} M</span>
+      <span class="stat-detail">Est. Cost: $${totalCost}</span>
+    </div>
+  `;
+}
+
+function renderTokenChart(data) {
   const ctx = document.getElementById('tokens-chart').getContext('2d');
 
   if (tokenChart) {
@@ -421,27 +449,35 @@ function renderTokenChart(labels, inspectionData, reportData, telegramData, vide
     tokenChart = null;
   }
 
+  const labels = data.map(d => d.date);
+  const inputValues = data.map(d => d.input / 1_000_000);
+  const outputValues = data.map(d => d.output / 1_000_000);
+  const totalValues = data.map(d => d.total / 1_000_000);
+
   tokenChart = new Chart(ctx, {
-    type: 'bar',
+    type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Inspection', data: inspectionData, backgroundColor: 'rgba(40, 167, 69, 0.8)', stack: 'tokens' },
-        { label: 'Report', data: reportData, backgroundColor: 'rgba(26, 115, 232, 0.8)', stack: 'tokens' },
-        { label: 'Telegram', data: telegramData, backgroundColor: 'rgba(255, 152, 0, 0.8)', stack: 'tokens' },
-        { label: 'Video', data: videoData, backgroundColor: 'rgba(156, 39, 176, 0.8)', stack: 'tokens' },
+        { label: 'Input Tokens', data: inputValues, borderColor: '#28a745', backgroundColor: 'rgba(40,167,69,0.1)', borderWidth: 2, fill: false, tension: 0.4, pointRadius: 3 },
+        { label: 'Output Tokens', data: outputValues, borderColor: '#e67e22', backgroundColor: 'rgba(230,126,34,0.1)', borderWidth: 2, fill: false, tension: 0.4, pointRadius: 3 },
+        { label: 'Total Tokens', data: totalValues, borderColor: '#007bff', backgroundColor: 'rgba(0,123,255,0.1)', borderWidth: 2, fill: true, tension: 0.4, pointRadius: 4 },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: {
+          title: { display: true, text: 'Million Tokens' },
+          ticks: { callback: v => v.toFixed(2) + ' M' },
+          beginAtZero: true,
+        },
+      },
       plugins: {
         legend: { position: 'top' },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}` } },
-      },
-      scales: {
-        x: { stacked: true },
-        y: { stacked: true, ticks: { callback: v => v.toLocaleString() } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)} M` } },
       },
     },
   });
