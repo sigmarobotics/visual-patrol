@@ -1,19 +1,17 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://shnrmpapyfgorcccciqw.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_81nkEf7V3kWWaG7oqLc7wA_SuhIZNEw';
 const VERIFY_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/verify-share`;
+const DASHBOARD_API_URL = `${SUPABASE_URL}/functions/v1/dashboard-api`;
 
 // ─── Module-level state ────────────────────────────────────────────────────────
-let supabase = null;
 let siteId = null;
 let accessToken = null;
 let tokenChart = null;
-let realtimeChannel = null;
+let pollTimer = null;
 
 // ─── Utility helpers ───────────────────────────────────────────────────────────
 
 function getShareToken() {
-  // URL shape: /share/{token}
   const match = window.location.pathname.match(/^\/share\/([^/]+)/);
   return match ? match[1] : null;
 }
@@ -56,6 +54,24 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// ─── API helper ──────────────────────────────────────────────────────────────
+
+async function apiCall(action, params = {}) {
+  const res = await fetch(DASHBOARD_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ action, params }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 async function authenticate(password) {
@@ -93,13 +109,6 @@ async function authenticate(password) {
     siteId = payload?.site_id ?? null;
     const siteName = payload?.site_name ?? null;
 
-    // Init Supabase client with custom auth header so RLS can read JWT claims
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: {
-        headers: { Authorization: 'Bearer ' + accessToken },
-      },
-    });
-
     showDashboard(siteName);
   } catch (err) {
     showAuthError('Network error. Please try again.');
@@ -127,43 +136,38 @@ async function showDashboard(siteName) {
     document.title = `Visual Patrol — ${siteName}`;
   }
 
-  // Set default token date range
   document.getElementById('tokens-date-from').value = isoDateDaysAgo(30);
   document.getElementById('tokens-date-to').value = todayIso();
 
   await loadRobots();
   await loadHistory();
-  setupRealtimeSubscription();
+
+  // Poll for updates every 30s (replaces real-time subscription)
+  pollTimer = setInterval(() => {
+    if (!document.getElementById('tab-history').hidden) loadHistory();
+  }, 30000);
+  document.getElementById('realtime-indicator').hidden = false;
 }
 
 // ─── Robots ───────────────────────────────────────────────────────────────────
 
 async function loadRobots() {
-  const { data, error } = await supabase
-    .from('robots')
-    .select('robot_id, robot_name')
-    .eq('site_id', siteId)
-    .order('robot_name');
+  try {
+    const robots = await apiCall('robots');
 
-  if (error) {
-    console.error('loadRobots error:', error);
-    return;
-  }
-
-  const robots = data ?? [];
-
-  // Populate both robot filter dropdowns
-  ['history-robot-filter', 'tokens-robot-filter'].forEach(id => {
-    const sel = document.getElementById(id);
-    // Remove old dynamic options (keep the first "All robots" option)
-    while (sel.options.length > 1) sel.remove(1);
-    robots.forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r.robot_id;
-      opt.textContent = r.robot_name || r.robot_id;
-      sel.appendChild(opt);
+    ['history-robot-filter', 'tokens-robot-filter'].forEach(id => {
+      const sel = document.getElementById(id);
+      while (sel.options.length > 1) sel.remove(1);
+      robots.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.robot_id;
+        opt.textContent = r.robot_name || r.robot_id;
+        sel.appendChild(opt);
+      });
     });
-  });
+  } catch (error) {
+    console.error('loadRobots error:', error);
+  }
 }
 
 // ─── History tab ─────────────────────────────────────────────────────────────
@@ -174,40 +178,30 @@ async function loadHistory() {
 
   const robotFilter = document.getElementById('history-robot-filter').value;
 
-  let query = supabase
-    .from('patrol_runs')
-    .select('id, local_id, robot_id, status, start_time, end_time, total_tokens, robots(robot_name)')
-    .eq('site_id', siteId)
-    .order('local_id', { ascending: false })
-    .limit(100);
+  try {
+    const params = {};
+    if (robotFilter) params.robot_id = robotFilter;
+    const runs = await apiCall('history', params);
 
-  if (robotFilter) query = query.eq('robot_id', robotFilter);
+    if (runs.length === 0) {
+      listEl.innerHTML = '<p class="state-empty">No patrol runs found.</p>';
+      return;
+    }
 
-  const { data, error } = await query;
+    listEl.innerHTML = runs.map(run => renderRunCard(run)).join('');
 
-  if (error) {
-    listEl.innerHTML = `<p class="state-error">Failed to load history: ${escapeHtml(error.message)}</p>`;
-    return;
-  }
-
-  const runs = data ?? [];
-  if (runs.length === 0) {
-    listEl.innerHTML = '<p class="state-empty">No patrol runs found.</p>';
-    return;
-  }
-
-  listEl.innerHTML = runs.map(run => renderRunCard(run)).join('');
-
-  // Attach click handlers
-  listEl.querySelectorAll('.run-card').forEach(card => {
-    card.addEventListener('click', () => {
-      showRunDetail(card.dataset.cloudRunId);
+    listEl.querySelectorAll('.run-card').forEach(card => {
+      card.addEventListener('click', () => {
+        showRunDetail(card.dataset.cloudRunId);
+      });
     });
-  });
+  } catch (error) {
+    listEl.innerHTML = `<p class="state-error">Failed to load history: ${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function renderRunCard(run) {
-  const robotName = run.robots?.robot_name || run.robot_id;
+  const robotName = run.robot_name || run.robot_id;
   const tokens = run.total_tokens != null ? `${run.total_tokens.toLocaleString()} tokens` : '';
   return `
     <div class="run-card" data-cloud-run-id="${escapeHtml(run.id)}">
@@ -233,69 +227,44 @@ async function showRunDetail(cloudRunId) {
   modal.hidden = false;
   document.body.style.overflow = 'hidden';
 
-  // Fetch run
-  const { data: run, error: runError } = await supabase
-    .from('patrol_runs')
-    .select('*, robots(robot_name)')
-    .eq('id', cloudRunId)
-    .single();
+  try {
+    const { run, inspections, alerts } = await apiCall('run-detail', { run_id: cloudRunId });
 
-  if (runError || !run) {
-    content.innerHTML = `<p class="state-error">Failed to load run details.</p>`;
-    return;
-  }
-
-  // Fetch inspection results
-  const { data: inspections } = await supabase
-    .from('inspection_results')
-    .select('*')
-    .eq('run_id', cloudRunId)
-    .order('id');
-
-  // Fetch edge AI alerts
-  const { data: alerts } = await supabase
-    .from('edge_ai_alerts')
-    .select('*')
-    .eq('run_id', cloudRunId)
-    .order('id');
-
-  const robotName = run.robots?.robot_name || run.robot_id;
-
-  let html = `
-    <h2 class="modal-run-title">Patrol Run #${escapeHtml(String(run.local_id ?? run.id))}</h2>
-    <div class="modal-run-meta">
-      <span><strong>Robot:</strong> ${escapeHtml(robotName)}</span>
-      <span><strong>Status:</strong> <span class="badge ${statusClass(run.status)}">${escapeHtml(run.status ?? '—')}</span></span>
-      <span><strong>Start:</strong> ${formatDateTime(run.start_time)}</span>
-      <span><strong>End:</strong> ${formatDateTime(run.end_time)}</span>
-    </div>
-  `;
-
-  // Report content (markdown)
-  if (run.report_content) {
-    html += `
-      <section class="modal-section">
-        <h3>Report</h3>
-        <div class="markdown-body">${marked.parse(run.report_content)}</div>
-      </section>
+    let html = `
+      <h2 class="modal-run-title">Patrol Run #${escapeHtml(String(run.local_id ?? run.id))}</h2>
+      <div class="modal-run-meta">
+        <span><strong>Robot:</strong> ${escapeHtml(run.robot_id)}</span>
+        <span><strong>Status:</strong> <span class="badge ${statusClass(run.status)}">${escapeHtml(run.status ?? '—')}</span></span>
+        <span><strong>Start:</strong> ${formatDateTime(run.start_time)}</span>
+        <span><strong>End:</strong> ${formatDateTime(run.end_time)}</span>
+      </div>
     `;
-  }
 
-  // Inspection results
-  if (inspections && inspections.length > 0) {
-    html += `<section class="modal-section"><h3>Inspection Points (${inspections.length})</h3>`;
-    html += inspections.map(insp => renderInspectionCard(insp)).join('');
-    html += `</section>`;
-  }
+    if (run.report_content) {
+      html += `
+        <section class="modal-section">
+          <h3>Report</h3>
+          <div class="markdown-body">${marked.parse(run.report_content)}</div>
+        </section>
+      `;
+    }
 
-  // Edge AI alerts
-  if (alerts && alerts.length > 0) {
-    html += `<section class="modal-section"><h3>Edge AI Alerts (${alerts.length})</h3>`;
-    html += alerts.map(alert => renderAlertCard(alert)).join('');
-    html += `</section>`;
-  }
+    if (inspections && inspections.length > 0) {
+      html += `<section class="modal-section"><h3>Inspection Points (${inspections.length})</h3>`;
+      html += inspections.map(insp => renderInspectionCard(insp)).join('');
+      html += `</section>`;
+    }
 
-  content.innerHTML = html;
+    if (alerts && alerts.length > 0) {
+      html += `<section class="modal-section"><h3>Edge AI Alerts (${alerts.length})</h3>`;
+      html += alerts.map(alert => renderAlertCard(alert)).join('');
+      html += `</section>`;
+    }
+
+    content.innerHTML = html;
+  } catch (error) {
+    content.innerHTML = `<p class="state-error">Failed to load run details.</p>`;
+  }
 }
 
 function renderInspectionCard(insp) {
@@ -352,37 +321,29 @@ async function loadReports() {
   const listEl = document.getElementById('reports-list');
   listEl.innerHTML = '<p class="state-loading">Loading reports…</p>';
 
-  const { data, error } = await supabase
-    .from('generated_reports')
-    .select('id, local_id, start_date, end_date, report_content, total_tokens, robot_id, robots(robot_name)')
-    .eq('site_id', siteId)
-    .order('local_id', { ascending: false })
-    .limit(50);
+  try {
+    const reports = await apiCall('reports');
 
-  if (error) {
-    listEl.innerHTML = `<p class="state-error">Failed to load reports: ${escapeHtml(error.message)}</p>`;
-    return;
-  }
+    if (reports.length === 0) {
+      listEl.innerHTML = '<p class="state-empty">No reports found.</p>';
+      return;
+    }
 
-  const reports = data ?? [];
-  if (reports.length === 0) {
-    listEl.innerHTML = '<p class="state-empty">No reports found.</p>';
-    return;
-  }
+    listEl.innerHTML = reports.map(r => renderReportCard(r)).join('');
 
-  listEl.innerHTML = reports.map(r => renderReportCard(r)).join('');
-
-  // Toggle collapse on header click
-  listEl.querySelectorAll('.report-header').forEach(header => {
-    header.addEventListener('click', () => {
-      const card = header.closest('.report-card');
-      card.classList.toggle('collapsed');
+    listEl.querySelectorAll('.report-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const card = header.closest('.report-card');
+        card.classList.toggle('collapsed');
+      });
     });
-  });
+  } catch (error) {
+    listEl.innerHTML = `<p class="state-error">Failed to load reports: ${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function renderReportCard(report) {
-  const robotName = report.robots?.robot_name || report.robot_id || '—';
+  const robotName = report.robot_id || '—';
   const dateRange = `${report.start_date ?? '?'} → ${report.end_date ?? '?'}`;
   const tokens = report.total_tokens != null ? `${report.total_tokens.toLocaleString()} tokens` : '';
   const bodyHtml = report.report_content
@@ -412,65 +373,42 @@ async function loadTokenStats() {
   const toDate = document.getElementById('tokens-date-to').value;
   const robotFilter = document.getElementById('tokens-robot-filter').value;
 
-  // Query patrol_runs for token columns
-  let query = supabase
-    .from('patrol_runs')
-    .select([
-      'start_time',
-      'inspection_input_tokens', 'inspection_output_tokens',
-      'report_input_tokens', 'report_output_tokens',
-      'telegram_input_tokens', 'telegram_output_tokens',
-      'video_input_tokens', 'video_output_tokens',
-      'total_tokens',
-    ].join(','))
-    .eq('site_id', siteId)
-    .not('start_time', 'is', null);
+  try {
+    const params = {};
+    if (fromDate) params.date_from = fromDate;
+    if (toDate) params.date_to = toDate;
+    if (robotFilter) params.robot_id = robotFilter;
 
-  if (fromDate) query = query.gte('start_time', fromDate);
-  if (toDate) {
-    // Include the full toDate day by using < toDate+1
-    const nextDay = new Date(toDate);
-    nextDay.setDate(nextDay.getDate() + 1);
-    query = query.lt('start_time', nextDay.toISOString().slice(0, 10));
-  }
-  if (robotFilter) query = query.eq('robot_id', robotFilter);
+    const runs = await apiCall('token-stats', params);
 
-  const { data, error } = await query.order('start_time');
+    const byDate = {};
+    for (const run of runs) {
+      const date = run.start_time.slice(0, 10);
+      if (!byDate[date]) byDate[date] = { inspection: 0, report: 0, telegram: 0, video: 0 };
+      const g = byDate[date];
 
-  if (error) {
+      const inspToks = (run.inspection_input_tokens ?? 0) + (run.inspection_output_tokens ?? 0);
+      const reportToks = (run.report_input_tokens ?? 0) + (run.report_output_tokens ?? 0);
+      const telegramToks = (run.telegram_input_tokens ?? 0) + (run.telegram_output_tokens ?? 0);
+      const videoToks = (run.video_input_tokens ?? 0) + (run.video_output_tokens ?? 0);
+
+      g.inspection += inspToks;
+      g.report += reportToks;
+      g.telegram += telegramToks;
+      g.video += videoToks;
+    }
+
+    const labels = Object.keys(byDate).sort();
+    renderTokenChart(
+      labels,
+      labels.map(d => byDate[d].inspection),
+      labels.map(d => byDate[d].report),
+      labels.map(d => byDate[d].telegram),
+      labels.map(d => byDate[d].video)
+    );
+  } catch (error) {
     console.error('loadTokenStats error:', error);
-    return;
   }
-
-  const runs = data ?? [];
-
-  // Group by date (local date from start_time)
-  const byDate = {};
-  for (const run of runs) {
-    const date = run.start_time.slice(0, 10);
-    if (!byDate[date]) byDate[date] = { inspection: 0, report: 0, telegram: 0, video: 0 };
-    const g = byDate[date];
-
-    const reportToks = (run.report_input_tokens ?? 0) + (run.report_output_tokens ?? 0);
-    const telegramToks = (run.telegram_input_tokens ?? 0) + (run.telegram_output_tokens ?? 0);
-    const videoToks = (run.video_input_tokens ?? 0) + (run.video_output_tokens ?? 0);
-    const total = run.total_tokens ?? 0;
-    // Inspection = total minus the rest
-    const inspectionToks = Math.max(0, total - reportToks - telegramToks - videoToks);
-
-    g.inspection += inspectionToks;
-    g.report += reportToks;
-    g.telegram += telegramToks;
-    g.video += videoToks;
-  }
-
-  const labels = Object.keys(byDate).sort();
-  const inspectionData = labels.map(d => byDate[d].inspection);
-  const reportData = labels.map(d => byDate[d].report);
-  const telegramData = labels.map(d => byDate[d].telegram);
-  const videoData = labels.map(d => byDate[d].video);
-
-  renderTokenChart(labels, inspectionData, reportData, telegramData, videoData);
 }
 
 function renderTokenChart(labels, inspectionData, reportData, telegramData, videoData) {
@@ -486,30 +424,10 @@ function renderTokenChart(labels, inspectionData, reportData, telegramData, vide
     data: {
       labels,
       datasets: [
-        {
-          label: 'Inspection',
-          data: inspectionData,
-          backgroundColor: 'rgba(40, 167, 69, 0.8)',
-          stack: 'tokens',
-        },
-        {
-          label: 'Report',
-          data: reportData,
-          backgroundColor: 'rgba(26, 115, 232, 0.8)',
-          stack: 'tokens',
-        },
-        {
-          label: 'Telegram',
-          data: telegramData,
-          backgroundColor: 'rgba(255, 152, 0, 0.8)',
-          stack: 'tokens',
-        },
-        {
-          label: 'Video',
-          data: videoData,
-          backgroundColor: 'rgba(156, 39, 176, 0.8)',
-          stack: 'tokens',
-        },
+        { label: 'Inspection', data: inspectionData, backgroundColor: 'rgba(40, 167, 69, 0.8)', stack: 'tokens' },
+        { label: 'Report', data: reportData, backgroundColor: 'rgba(26, 115, 232, 0.8)', stack: 'tokens' },
+        { label: 'Telegram', data: telegramData, backgroundColor: 'rgba(255, 152, 0, 0.8)', stack: 'tokens' },
+        { label: 'Video', data: videoData, backgroundColor: 'rgba(156, 39, 176, 0.8)', stack: 'tokens' },
       ],
     },
     options: {
@@ -517,81 +435,14 @@ function renderTokenChart(labels, inspectionData, reportData, telegramData, vide
       maintainAspectRatio: true,
       plugins: {
         legend: { position: 'top' },
-        tooltip: {
-          callbacks: {
-            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
-          },
-        },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}` } },
       },
       scales: {
         x: { stacked: true },
-        y: {
-          stacked: true,
-          ticks: {
-            callback: v => v.toLocaleString(),
-          },
-        },
+        y: { stacked: true, ticks: { callback: v => v.toLocaleString() } },
       },
     },
   });
-}
-
-// ─── Real-time subscription ───────────────────────────────────────────────────
-
-function setupRealtimeSubscription() {
-  if (!supabase || !siteId) return;
-
-  realtimeChannel = supabase
-    .channel(`site-${siteId}-updates`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'patrol_runs',
-        filter: `site_id=eq.${siteId}`,
-      },
-      () => {
-        // New run started — refresh history if that tab is visible
-        if (!document.getElementById('tab-history').hidden) {
-          loadHistory();
-        }
-      }
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'patrol_runs',
-        filter: `site_id=eq.${siteId}`,
-      },
-      () => {
-        if (!document.getElementById('tab-history').hidden) {
-          loadHistory();
-        }
-      }
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'inspection_results',
-        filter: `site_id=eq.${siteId}`,
-      },
-      () => {
-        // New inspection result — just refresh history list badges/tokens
-        if (!document.getElementById('tab-history').hidden) {
-          loadHistory();
-        }
-      }
-    )
-    .subscribe(status => {
-      if (status === 'SUBSCRIBED') {
-        document.getElementById('realtime-indicator').hidden = false;
-      }
-    });
 }
 
 // ─── Tab switching ────────────────────────────────────────────────────────────
@@ -604,12 +455,8 @@ function switchTab(tabName) {
     section.hidden = section.id !== `tab-${tabName}`;
   });
 
-  // Lazy-load tab content
-  if (tabName === 'reports') {
-    loadReports();
-  } else if (tabName === 'tokens') {
-    loadTokenStats();
-  }
+  if (tabName === 'reports') loadReports();
+  else if (tabName === 'tokens') loadTokenStats();
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -627,29 +474,21 @@ function init() {
     return;
   }
 
-  // Password submit
   document.getElementById('auth-submit').addEventListener('click', () => {
-    const pwd = document.getElementById('password-input').value;
-    authenticate(pwd);
+    authenticate(document.getElementById('password-input').value);
   });
 
-  // Enter key on password field
   document.getElementById('password-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') authenticate(e.target.value);
   });
 
-  // Tab click handlers
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // History robot filter
   document.getElementById('history-robot-filter').addEventListener('change', loadHistory);
-
-  // Token load button
   document.getElementById('tokens-load-btn').addEventListener('click', loadTokenStats);
 
-  // Modal close
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('run-modal').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeModal();
