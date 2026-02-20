@@ -30,7 +30,7 @@ services:
       - RELAY_SERVICE_URL=http://192.168.50.35:5020
       - SUPABASE_URL=https://shnrmpapyfgorcccciqw.supabase.co
       - SUPABASE_KEY=${SUPABASE_KEY}
-      - SITE_ID=
+      - SITE_ID=0c87727d-65c3-44a2-b392-9bdccee1a304
       - CLOUD_DASHBOARD_URL=
     restart: unless-stopped
 
