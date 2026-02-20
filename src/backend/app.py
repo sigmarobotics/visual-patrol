@@ -807,6 +807,13 @@ def generate_report_route():
             robot_id=report_robot_id
         )
 
+        # Sync report to cloud
+        try:
+            import sync_service
+            sync_service.sync_report(report_id)
+        except Exception:
+            pass  # non-blocking
+
         return jsonify({
             "id": report_id,
             "report": response['result'],
@@ -1013,6 +1020,107 @@ def serve_robot_image(robot_id, filename):
     return "Image not found", 404
 
 
+# --- Share Links API (Cloud Sync) ---
+
+@app.route('/api/share-links', methods=['GET'])
+def list_share_links():
+    """List all share links for this site."""
+    import sync_service
+    client = sync_service._get_client()
+    if not client:
+        return jsonify({"error": "Cloud sync not configured"}), 503
+
+    from config import SITE_ID, CLOUD_DASHBOARD_URL
+    try:
+        result = client.table('share_links').select('*').eq(
+            'site_id', SITE_ID).order('created_at', desc=True).execute()
+        links = []
+        for link in result.data:
+            links.append({
+                'id': link['id'],
+                'token': link['token'],
+                'label': link.get('label', ''),
+                'expires_at': link.get('expires_at'),
+                'created_at': link['created_at'],
+                'url': f"{CLOUD_DASHBOARD_URL}/share/{link['token']}" if CLOUD_DASHBOARD_URL else '',
+            })
+        return jsonify(links)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/share-links', methods=['POST'])
+def create_share_link():
+    """Create a new share link with password."""
+    import sync_service
+    client = sync_service._get_client()
+    if not client:
+        return jsonify({"error": "Cloud sync not configured"}), 503
+
+    import uuid as uuid_mod
+    import hashlib
+    from config import SITE_ID, CLOUD_DASHBOARD_URL
+
+    data = request.get_json()
+    password = data.get('password', '')
+    label = data.get('label', '')
+    expires_days = data.get('expires_days')
+
+    if not password or len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+
+    token = uuid_mod.uuid4().hex[:12]
+
+    # bcrypt hash
+    try:
+        import bcrypt as bcrypt_mod
+        password_hash = bcrypt_mod.hashpw(password.encode(), bcrypt_mod.gensalt()).decode()
+    except ImportError:
+        import secrets
+        salt = secrets.token_hex(16)
+        password_hash = f"sha256:{salt}:{hashlib.sha256(f'{salt}{password}'.encode()).hexdigest()}"
+
+    expires_at = None
+    if expires_days:
+        from datetime import timedelta
+        expires_at = (datetime.utcnow() + timedelta(days=int(expires_days))).isoformat()
+
+    try:
+        link_data = {
+            'token': token,
+            'site_id': SITE_ID,
+            'password_hash': password_hash,
+            'label': label,
+            'expires_at': expires_at,
+        }
+        result = client.table('share_links').insert(link_data).execute()
+        url = f"{CLOUD_DASHBOARD_URL}/share/{token}" if CLOUD_DASHBOARD_URL else f"/share/{token}"
+        return jsonify({
+            'id': result.data[0]['id'],
+            'token': token,
+            'url': url,
+            'label': label,
+            'expires_at': expires_at,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/share-links/<link_id>', methods=['DELETE'])
+def delete_share_link(link_id):
+    """Delete a share link."""
+    import sync_service
+    client = sync_service._get_client()
+    if not client:
+        return jsonify({"error": "Cloud sync not configured"}), 503
+
+    try:
+        client.table('share_links').delete().eq('id', link_id).execute()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # --- Heartbeat Thread ---
 
 def _heartbeat_loop():
@@ -1021,6 +1129,8 @@ def _heartbeat_loop():
         try:
             is_connected = robot_service.connected
             update_robot_heartbeat(ROBOT_ID, is_connected)
+            import sync_service
+            sync_service.sync_robot_status(ROBOT_ID, ROBOT_NAME, is_connected)
         except Exception as e:
             logging.warning(f"Heartbeat error: {e}")
         time.sleep(30)
@@ -1045,6 +1155,10 @@ if __name__ == '__main__':
     # Start heartbeat thread
     heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
     heartbeat_thread.start()
+
+    # Start cloud sync background thread
+    import sync_service
+    sync_service.start_background_sync()
 
     port = int(os.getenv('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, debug=False)

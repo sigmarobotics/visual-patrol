@@ -582,6 +582,13 @@ class PatrolService:
         except Exception as e:
             logger.error(f"DB Error updating token totals: {e}")
 
+        # Sync to cloud (no-op if Supabase not configured)
+        try:
+            import sync_service
+            sync_service.sync_run(self.current_run_id)
+        except Exception as e:
+            logger.warning(f"Cloud sync failed (non-blocking): {e}")
+
         logger.info(f"Patrol Run {self.current_run_id} finished: {final_status}")
         with self.patrol_lock:
             self.is_patrolling = False
