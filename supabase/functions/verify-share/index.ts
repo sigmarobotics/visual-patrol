@@ -4,7 +4,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { SignJWT } from "https://deno.land/x/jose@v5.2.0/index.ts";
-import { compare } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import { compareSync } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -91,7 +91,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // Verify password against bcrypt hash
   let passwordValid: boolean;
   try {
-    passwordValid = await compare(password, shareLink.password_hash);
+    passwordValid = compareSync(password, shareLink.password_hash);
   } catch (err) {
     console.error("bcrypt compare error:", err);
     return new Response(JSON.stringify({ error: "Internal server error" }), {
