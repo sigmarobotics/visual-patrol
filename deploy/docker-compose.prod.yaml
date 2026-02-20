@@ -23,6 +23,10 @@ services:
       - ROBOT_NAME=Robot A
       - ROBOT_IP=192.168.50.133:26400
       - RELAY_SERVICE_URL=http://localhost:5020
+      - SUPABASE_URL=https://shnrmpapyfgorcccciqw.supabase.co
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - SITE_ID=0c87727d-65c3-44a2-b392-9bdccee1a304
+      - CLOUD_DASHBOARD_URL=https://cloud-dashboard-tawny.vercel.app
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/api/state')"]

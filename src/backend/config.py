@@ -9,6 +9,12 @@ ROBOT_IP = os.getenv("ROBOT_IP", "192.168.50.133:26400")
 # Relay service (Jetson-side ffmpeg relay, empty = relay not available)
 RELAY_SERVICE_URL = os.getenv("RELAY_SERVICE_URL", "")
 
+# Supabase cloud sync (empty = sync disabled, zero impact on local operation)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")       # service_role key
+SITE_ID = os.getenv("SITE_ID", "")                 # UUID from Supabase sites table
+CLOUD_DASHBOARD_URL = os.getenv("CLOUD_DASHBOARD_URL", "")  # e.g. https://xxx.vercel.app
+
 # Jetson service ports (fixed, co-located on Jetson)
 JETSON_JPS_API_PORT = 5010
 JETSON_JPS_METRICS_PORT = 5012
