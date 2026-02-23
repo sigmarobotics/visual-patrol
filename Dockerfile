@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender-dev \
     ffmpeg \
     gosu \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for faster dependency resolution
@@ -46,6 +47,9 @@ RUN mkdir -p /app/src/backend/fonts && \
          -o /app/src/backend/fonts/NotoSansCJKtc-Bold.otf && \
     curl -L "https://github.com/IBM/plex/raw/master/IBM-Plex-Mono/fonts/complete/otf/IBMPlexMono-Regular.otf" \
          -o /app/src/backend/fonts/IBMPlexMono-Regular.otf
+
+# Prefer IPv4 over IPv6 (prevents 40s delay on Gemini API calls)
+RUN echo "precedence ::ffff:0:0/96 100" > /etc/gai.conf
 
 # Set locale
 ENV LANG=C.UTF-8
