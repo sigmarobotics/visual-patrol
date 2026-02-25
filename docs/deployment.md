@@ -300,20 +300,24 @@ cd /code/vila-jps && docker compose restart jps_vlm
     restart: unless-stopped
 ```
 
-2. Add routing in `deploy/nginx.conf`. Since host networking cannot use Docker DNS, you need explicit port routing:
+2. Add an `if` block for the new robot in `deploy/nginx.conf`:
+
+```nginx
+if ($robot_id = "robot-b") { set $backend_port 5002; }
+```
+
+The full location block should look like:
 
 ```nginx
 location ~ ^/api/(robot-[^/]+)/(.*)$ {
     set $robot_id $1;
     set $api_path $2;
 
-    # Route to correct backend port based on robot ID
-    set $backend "127.0.0.1:5001";
-    if ($robot_id = "robot-b") {
-        set $backend "127.0.0.1:5002";
-    }
+    set $backend_port 5001;
+    if ($robot_id = "robot-b") { set $backend_port 5002; }
+    # Add more robots here...
 
-    proxy_pass http://$backend/api/$api_path$is_args$args;
+    proxy_pass http://127.0.0.1:$backend_port/api/$api_path$is_args$args;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_buffering off;
@@ -321,9 +325,21 @@ location ~ ^/api/(robot-[^/]+)/(.*)$ {
 }
 ```
 
-3. Restart:
+3. Add a healthcheck with the **correct port** (must match `PORT` env var):
+
+```yaml
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/api/state')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+4. Restart:
 ```bash
 docker compose -f docker-compose.prod.yaml up -d
+docker exec visual_patrol_nginx nginx -s reload
 ```
 
 ### Updating
@@ -484,3 +500,111 @@ healthcheck:
 | Permission denied on data/logs | The entrypoint script runs `chown` automatically; check if `gosu` is installed |
 | Stale robot entries in DB | Can happen if `ROBOT_ID` env var is missing (defaults to `"default"`) |
 | frame_hub push not starting | Check `logs/{robot-id}_frame_hub.log`; verify camera is connected and `enable_idle_stream` is true |
+| All robots show same map/camera | nginx routing broken — see [Multi-Robot Routing Debug](#multi-robot-routing-debug) below |
+| Healthcheck always unhealthy | Verify each robot's healthcheck URL matches its own `PORT` (not another robot's port) |
+
+### Multi-Robot Routing Debug
+
+When switching robots in the frontend but always seeing the same map/camera/state data, the problem is nginx routing all robot-specific requests to the same backend. This section walks through a systematic diagnosis.
+
+#### Symptom
+
+Frontend has 3 robots in the dropdown. Switching between them shows identical map images and camera feeds — always from the first robot.
+
+#### Step 1: Verify backends are running on separate ports
+
+Each robot backend must listen on its own port (set via `PORT` env var):
+
+```bash
+# Check all containers are running
+docker compose -f docker-compose.prod.yaml ps
+
+# Test each backend directly (bypass nginx)
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/api/state   # robot-a
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/api/state   # robot-b
+curl -s -o /dev/null -w '%{http_code}' http://localhost:5003/api/state   # robot-c
+```
+
+All should return `200`. If any returns connection refused, that backend is not running or using a different port.
+
+#### Step 2: Verify nginx routes to different backends
+
+```bash
+# These should return different robot_id values
+curl -s http://localhost:5000/api/robot-a/state | python3 -c "import json,sys; print(json.load(sys.stdin).get('robot_id'))"
+curl -s http://localhost:5000/api/robot-b/state | python3 -c "import json,sys; print(json.load(sys.stdin).get('robot_id'))"
+curl -s http://localhost:5000/api/robot-c/state | python3 -c "import json,sys; print(json.load(sys.stdin).get('robot_id'))"
+```
+
+If all three return the same `robot_id`, nginx is routing everything to one backend.
+
+#### Step 3: Verify map images are different
+
+```bash
+# Compare response sizes — different robots with different maps should have different sizes
+curl -s -o /dev/null -w 'robot-a: %{size_download}\n' http://localhost:5000/api/robot-a/map
+curl -s -o /dev/null -w 'robot-b: %{size_download}\n' http://localhost:5000/api/robot-b/map
+curl -s -o /dev/null -w 'robot-c: %{size_download}\n' http://localhost:5000/api/robot-c/map
+```
+
+#### Root Cause: nginx.conf hardcoded port
+
+The most common cause is `nginx.conf` routing all robot-specific requests to the same port:
+
+```nginx
+# WRONG — all robots go to port 5001
+location ~ ^/api/(robot-[^/]+)/(.*)$ {
+    proxy_pass http://127.0.0.1:5001/api/$2$is_args$args;
+}
+```
+
+The correct config uses `set` + `if` to route by robot ID:
+
+```nginx
+# CORRECT — route to backend by robot ID
+location ~ ^/api/(robot-[^/]+)/(.*)$ {
+    set $robot_id $1;
+    set $api_path $2;
+
+    set $backend_port 5001;
+    if ($robot_id = "robot-b") { set $backend_port 5002; }
+    if ($robot_id = "robot-c") { set $backend_port 5003; }
+
+    proxy_pass http://127.0.0.1:$backend_port/api/$api_path$is_args$args;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_buffering off;
+    proxy_read_timeout 300s;
+}
+```
+
+> **Note**: `map $uri` with variable in `proxy_pass` does NOT work reliably in nginx regex locations. Use `set` + `if` instead.
+
+#### Step 4: Verify healthchecks match ports
+
+Each robot's healthcheck must point to its own port. A common copy-paste error:
+
+```yaml
+# WRONG — robot-b checking robot-a's port
+robot-b:
+  environment:
+    - PORT=5002
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/api/state')"]
+
+# CORRECT
+robot-b:
+  environment:
+    - PORT=5002
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/api/state')"]
+```
+
+#### After Fixing
+
+```bash
+# Reload nginx (no container restart needed)
+docker exec visual_patrol_nginx nginx -t && docker exec visual_patrol_nginx nginx -s reload
+
+# Re-run Step 2 to verify routing
+```

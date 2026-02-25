@@ -21,15 +21,59 @@ services:
       - PORT=5001
       - ROBOT_ID=robot-a
       - ROBOT_NAME=Robot A
-      - ROBOT_IP=192.168.50.133:26400
+      - ROBOT_IP=192.168.125.103:26400
       - RELAY_SERVICE_URL=http://localhost:5020
-      - SUPABASE_URL=https://shnrmpapyfgorcccciqw.supabase.co
-      - SUPABASE_KEY=${SUPABASE_KEY}
-      - SITE_ID=0c87727d-65c3-44a2-b392-9bdccee1a304
-      - CLOUD_DASHBOARD_URL=https://cloud-dashboard-tawny.vercel.app
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/api/state')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  robot-b:
+    container_name: visual_patrol_robot_b
+    image: ghcr.io/sigma-snaken/visual-patrol:latest
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+      - TZ=Asia/Taipei
+      - PORT=5002
+      - ROBOT_ID=robot-b
+      - ROBOT_NAME=Robot B
+      - ROBOT_IP=192.168.125.104:26400
+      - RELAY_SERVICE_URL=http://localhost:5020
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/api/state')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  robot-c:
+    container_name: visual_patrol_robot_c
+    image: ghcr.io/sigma-snaken/visual-patrol:latest
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+      - TZ=Asia/Taipei
+      - PORT=5003
+      - ROBOT_ID=robot-c
+      - ROBOT_NAME=Robot C
+      - ROBOT_IP=192.168.125.105:26400
+      - RELAY_SERVICE_URL=http://localhost:5020
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5003/api/state')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -50,21 +94,3 @@ services:
       - USE_NVENC=false
       - RELAY_FPS=2
     restart: unless-stopped
-
-  # robot-b:
-  #   container_name: visual_patrol_robot_b
-  #   image: ghcr.io/sigma-snaken/visual-patrol:latest
-  #   network_mode: host
-  #   volumes:
-  #     - ./data:/app/data
-  #     - ./logs:/app/logs
-  #   environment:
-  #     - DATA_DIR=/app/data
-  #     - LOG_DIR=/app/logs
-  #     - TZ=Asia/Taipei
-  #     - PORT=5002
-  #     - ROBOT_ID=robot-b
-  #     - ROBOT_NAME=Robot B
-  #     - ROBOT_IP=192.168.50.134:26400
-  #     - RELAY_SERVICE_URL=http://localhost:5020
-  #   restart: unless-stopped
