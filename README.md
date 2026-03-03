@@ -502,4 +502,6 @@ Detailed documentation is available in the [`docs/`](docs/) directory:
 
 ## License
 
-Copyright (c) 2026 Sigma Robotics. All rights reserved.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+Copyright 2026 Sigma Robotics
