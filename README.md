@@ -138,7 +138,7 @@ graph LR
     FH --> RTSP["RTSP Push<br/>(2 fps)"]
 
     SNAP -->|"JPEG"| IMG_AI["① Cloud VLM — Gemini<br/>Waypoint Inspection<br/>~3-5 s"]
-    VR -->|"MP4"| VID_AI["② Cloud VLM — Gemini<br/>Video Analysis<br/>~10-30 s"]
+    VR -->|"MP4"| VID_AI["② Cloud VLM — Gemini<br/>Video Analysis<br/>~5-30 min"]
     RTSP -->|"RTSP"| MTX["mediamtx"] --> VILA["③ Edge VLM — VILA<br/>Real-time Alert<br/>~1-2 s"]
 
     IMG_AI --> DB[(SQLite DB)]
@@ -149,7 +149,7 @@ graph LR
 | # | Mode | Trigger | AI Target | Latency | Output |
 |---|------|---------|-----------|---------|--------|
 | ① | **Waypoint Inspection** | Robot arrives at patrol point | Cloud VLM (Gemini) | ~3-5 s per point | Structured JSON (OK/NG + description) |
-| ② | **Video Analysis** | Patrol completes | Cloud VLM (Gemini) | ~10-30 s | Narrative summary of entire patrol |
+| ② | **Video Analysis** | Patrol completes | Cloud VLM (Gemini) | ~5-30 min | Narrative summary of entire patrol |
 | ③ | **Real-time Alert** | Continuous during patrol | Edge VLM (VILA on Jetson) | ~1-2 s | WebSocket alert event + evidence photo |
 
 ### Request Routing
