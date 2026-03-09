@@ -130,44 +130,20 @@ sequenceDiagram
 All image data originates from the robot's onboard camera. The centralized `frame_hub` polls the camera via gRPC once and distributes frames to three parallel AI processing paths — cloud-based semantic analysis and edge-based real-time alerting.
 
 ```mermaid
-graph TB
-    subgraph Robot["Kachaka Robot"]
-        CAM["Robot Camera<br/>(gRPC)"]
-    end
+graph LR
+    CAM["Robot Camera<br/>(gRPC)"] --> FH["frame_hub<br/>Frame Cache"]
 
-    subgraph Hub["Visual Patrol Backend"]
-        FH["frame_hub<br/>gRPC poll → Frame Cache"]
-        SNAP["Snapshot Capture<br/>(at each waypoint)"]
-        VR["Video Recorder<br/>(OpenCV, full patrol)"]
-        RTSP["ffmpeg RTSP Push<br/>(2 fps continuous)"]
-    end
+    FH --> SNAP["Snapshot<br/>(per waypoint)"]
+    FH --> VR["Video Recorder<br/>(full patrol)"]
+    FH --> RTSP["RTSP Push<br/>(2 fps)"]
 
-    subgraph CloudAI["Cloud AI — Google Gemini"]
-        direction TB
-        IMG_AI["① Waypoint Inspection<br/>Photo + prompt → structured JSON<br/>(OK / NG + description)"]
-        VID_AI["② Video Analysis<br/>Recording + prompt → patrol summary"]
-    end
+    SNAP -->|"JPEG"| IMG_AI["① Cloud VLM — Gemini<br/>Waypoint Inspection<br/>~3-5 s"]
+    VR -->|"MP4"| VID_AI["② Cloud VLM — Gemini<br/>Video Analysis<br/>~10-30 s"]
+    RTSP -->|"RTSP"| MTX["mediamtx"] --> VILA["③ Edge VLM — VILA<br/>Real-time Alert<br/>~1-2 s"]
 
-    subgraph EdgeAI["Edge AI — Jetson (VILA JPS)"]
-        direction TB
-        MTX["mediamtx<br/>RTSP Server :8555"]
-        VILA["VILA VLM<br/>Continuous Inference"]
-        WS["③ Real-time Alert<br/>WebSocket → alert events<br/>+ evidence snapshots"]
-    end
-
-    CAM -->|"single gRPC poll"| FH
-
-    FH --> SNAP
-    FH --> VR
-    FH --> RTSP
-
-    SNAP -->|"per-waypoint image"| IMG_AI
-    VR -->|"patrol video file"| VID_AI
-    RTSP -->|"live RTSP stream"| MTX --> VILA --> WS
-
-    IMG_AI -->|"is_NG, description"| DB[(SQLite DB)]
-    VID_AI -->|"summary report"| DB
-    WS -->|"alert + image"| DB
+    IMG_AI --> DB[(SQLite DB)]
+    VID_AI --> DB
+    VILA -->|"WebSocket"| DB
 ```
 
 | # | Mode | Trigger | AI Target | Latency | Output |
