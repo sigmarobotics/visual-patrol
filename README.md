@@ -125,6 +125,57 @@ sequenceDiagram
     Flask->>DB: Update patrol_run (completed)
 ```
 
+### Image Intelligence Pipeline
+
+All image data originates from the robot's onboard camera. The centralized `frame_hub` polls the camera via gRPC once and distributes frames to three parallel AI processing paths — cloud-based semantic analysis and edge-based real-time alerting.
+
+```mermaid
+graph TB
+    subgraph Robot["Kachaka Robot"]
+        CAM["Robot Camera<br/>(gRPC)"]
+    end
+
+    subgraph Hub["Visual Patrol Backend"]
+        FH["frame_hub<br/>gRPC poll → Frame Cache"]
+        SNAP["Snapshot Capture<br/>(at each waypoint)"]
+        VR["Video Recorder<br/>(OpenCV, full patrol)"]
+        RTSP["ffmpeg RTSP Push<br/>(2 fps continuous)"]
+    end
+
+    subgraph CloudAI["Cloud AI — Google Gemini"]
+        direction TB
+        IMG_AI["① Waypoint Inspection<br/>Photo + prompt → structured JSON<br/>(OK / NG + description)"]
+        VID_AI["② Video Analysis<br/>Recording + prompt → patrol summary"]
+    end
+
+    subgraph EdgeAI["Edge AI — Jetson (VILA JPS)"]
+        direction TB
+        MTX["mediamtx<br/>RTSP Server :8555"]
+        VILA["VILA VLM<br/>Continuous Inference"]
+        WS["③ Real-time Alert<br/>WebSocket → alert events<br/>+ evidence snapshots"]
+    end
+
+    CAM -->|"single gRPC poll"| FH
+
+    FH --> SNAP
+    FH --> VR
+    FH --> RTSP
+
+    SNAP -->|"per-waypoint image"| IMG_AI
+    VR -->|"patrol video file"| VID_AI
+    RTSP -->|"live RTSP stream"| MTX --> VILA --> WS
+
+    IMG_AI -->|"is_NG, description"| DB[(SQLite DB)]
+    VID_AI -->|"summary report"| DB
+    WS -->|"alert + image"| DB
+```
+
+| # | Mode | Trigger | AI Target | Latency | Output |
+|---|------|---------|-----------|---------|--------|
+| ① | **Waypoint Inspection** | Robot arrives at patrol point | Cloud VLM (Gemini) | ~3-5 s per point | Structured JSON (OK/NG + description) |
+| ② | **Video Analysis** | Patrol completes | Cloud VLM (Gemini) | ~10-30 s | Narrative summary of entire patrol |
+| ③ | **Real-time Alert** | Continuous during patrol | Edge VLM (VILA on Jetson) | ~1-2 s | WebSocket alert event + evidence photo |
+
 ### Request Routing
 
 - nginx regex `^/api/(robot-[^/]+)/(.*)$` strips the robot ID and proxies to the matching Docker service
