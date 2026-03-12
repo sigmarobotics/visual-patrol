@@ -1,247 +1,263 @@
-# 系統架構
+# Visual Patrol — 系統架構
 
 ## 概述
 
-Visual Patrol 是一套多機器人自主巡檢系統。透過網頁單頁應用程式 (SPA) 經由 nginx 反向代理連線至各機器人專屬的 Flask 後端實例，所有後端共用同一個 SQLite 資料庫。RTSP 中繼層 (mediamtx + ffmpeg) 提供持續的攝影機串流至 VILA JPS Alert API，實現即時監控。
+Visual Patrol 是一套多機器人自主巡檢系統，結合 **Kachaka 移動機器人**、**Google Gemini Vision AI**（雲端）與 **VILA JPS**（邊緣端）進行環境監控與異常偵測。
 
-```
-                           瀏覽器 (SPA)
-                               |
-                       nginx (port 5000)
-                      /        |        \
-               robot-a     robot-b     robot-c
-              Flask:5000  Flask:5000  Flask:5000
-                 |            |           |
-              Kachaka A    Kachaka B   Kachaka C
-                 \            |          /
-                  \           |         /
-                   共用 SQLite DB (WAL)
-                     data/report/report.db
+系統採用 **每機器人獨立後端** 架構：每台機器人運行各自的 Flask 程序，透過 WAL 模式共用同一個 SQLite 資料庫。nginx 反向代理將所有機器人集中在單一端口，從 URL 路徑中提取機器人 ID 進行路由分發。
 
-              mediamtx (RTSP 中繼, port 8555)
-              /{robot-id}/camera   <-- ffmpeg 轉碼 (gRPC JPEG)
-              /{robot-id}/external <-- ffmpeg 轉碼 (RTSP 來源)
-                        |
-                   VILA JPS (h264parse + nvv4l2decoder)
-                   串流 --> 警報規則 --> WebSocket 事件
-```
+## 系統架構圖
 
-## 元件說明
+```mermaid
+graph TB
+    subgraph Browser["瀏覽器"]
+        UI["SPA 儀表板<br/>機器人選擇器 + 6 個分頁"]
+    end
 
-### 前端 (SPA)
+    subgraph Nginx["nginx (:5000)"]
+        Router["URL 路由<br/>/api/{robot-id}/... → 後端<br/>/api/... → robot-a (全域)"]
+    end
 
-- **位置**: `src/frontend/`
-- **服務方式**: nginx (靜態檔案) 或 Flask (開發環境備援)
-- **技術**: 原生 JavaScript ES modules，無框架
-- **進入點**: `src/frontend/templates/index.html`
-- **JS 進入點**: `src/frontend/static/js/app.js`
+    subgraph Docker["Docker 服務"]
+        RobotA["robot-a<br/>Flask :5000"]
+        RobotB["robot-b<br/>Flask :5000"]
+        RobotC["robot-c<br/>Flask :5000"]
+    end
 
-前端為單一 HTML 頁面，採用分頁式導覽。共有 6 個分頁：Patrol、Control (預設)、History、Reports、Tokens、Settings。所有視圖同時存在於 DOM 中，透過 `switchTab()` 切換顯示/隱藏。地圖 canvas 會在 Control 和 Patrol 分頁之間實體搬移，避免維護重複的 canvas 狀態。
+    subgraph PerRobot["每機器人元件（Flask 內部）"]
+        RS["RobotService<br/>gRPC 背景輪詢"]
+        FH["FrameHub<br/>影像幀快取"]
+        PS["PatrolService<br/>巡檢點執行"]
+        Cloud["CloudAIService<br/>Gemini API"]
+        Edge["EdgeAIService<br/>VILA JPS WebSocket"]
+        RM["RelayManager<br/>Jetson HTTP 客戶端"]
+        VR["VideoRecorder<br/>MP4 錄影"]
+    end
 
-### 後端 (Flask)
+    subgraph Shared["共用資源"]
+        DB[(SQLite DB<br/>WAL 模式)]
+        Settings["global_settings<br/>(DB 表)"]
+        Images["data/images/<br/>巡檢快照"]
+    end
 
-- **位置**: `src/backend/`
-- **進入點**: `src/backend/app.py`
-- **執行環境**: Python 3.10+, Flask 3.x
+    subgraph Jetson["Jetson 主機"]
+        Relay["relay_service<br/>ffmpeg 轉碼"]
+        MTX["mediamtx<br/>RTSP 伺服器"]
+        VILA["VILA JPS<br/>邊緣端 VLM"]
+    end
 
-每台機器人執行各自的 Flask 程序。後端負責：
-- 提供前端 REST API
-- 透過 `kachaka-api` 以 gRPC 與 Kachaka 機器人通訊
-- 透過 Google Gemini API 進行 AI 推論
-- 巡檢任務調度 (移動、拍照、AI 分析)
-- 透過 frame_hub 集中管理攝影機畫面
-- 管理 RTSP 中繼 (ffmpeg 子程序推送至 mediamtx)
-- 透過 VILA JPS API 進行即時監控 (串流註冊、警報規則、WebSocket)
-- PDF 報告生成
-- Telegram 通知 (巡檢報告 + 即時警報照片)
-- 巡檢期間錄影
+    subgraph CloudSvc["雲端服務"]
+        Gemini["Google Gemini API"]
+        Supabase["Supabase"]
+    end
 
-### Frame Hub (集中式畫面管理)
-
-- **位置**: `src/backend/frame_hub.py` (280 行)
-- **類別**: `FrameHub`
-- **實例**: `frame_hub` (模組層級 singleton)
-
-集中式攝影機畫面管理器，取代各模組獨立的 gRPC 呼叫：
-
-1. **單一 gRPC 輪詢執行緒**：以 ~10fps 輪詢機器人前方攝影機，將最新畫面快取於記憶體
-2. **畫面快取 API**：所有消費者 (MJPEG 串流、Gemini 巡檢、錄影、證據擷取) 透過 `get_latest_frame()` 讀取快取
-3. **按需 RTSP 推送**：啟動 ffmpeg 將快取畫面以 2fps 直接推送至 Jetson mediamtx (`/{robot_id}/camera`)，供 VILA JPS 分析
-4. **生命週期管理**：根據巡檢狀態和 `enable_idle_stream` 設定自動啟停輪詢
-
-### RTSP Relay (mediamtx + ffmpeg)
-
-- **mediamtx**: 輕量級 RTSP 伺服器 (`bluenviron/mediamtx` Docker 映像，Jetson 上 port 8555)
-- **ffmpeg**: 由 `relay_service.py` 管理 (Jetson 端 relay 服務)
-
-兩種串流路徑：
-1. **機器人攝影機 (直推)**: frame_hub gRPC 輪詢 --> 畫面快取 --> ffmpeg 推送 (2fps) --> mediamtx `/{robot_id}/camera` --> VILA JPS（不經過 relay）
-2. **外部 RTSP (經 relay 轉碼)**: 來源 RTSP --> relay 服務 ffmpeg 轉碼 (H264 Baseline) --> RTSP 推送至 mediamtx `/{robot_id}/external` --> VILA JPS
-
-Relay 服務 (`relay_service.py`, port 5020) 是 Jetson 上的獨立 Flask 應用程式，僅用於外部 RTSP 轉碼。CI 建置映像至 `ghcr.io/sigmarobotics/visual-patrol-relay:latest`。
-
-VILA JPS 從 mediamtx 拉取 RTSP 串流進行持續 VLM 分析。
-
-### VILA JPS 整合
-
-- **Stream API**: `POST /api/v1/live-stream` 向 VILA 註冊 RTSP 串流
-- **Alert API**: `POST /api/v1/alerts` 為每個串流設定 yes/no 警報規則
-- **WebSocket**: `ws://{host}:5016/api/v1/alerts/ws` 傳遞即時警報事件
-- **取消註冊**: `DELETE /api/v1/live-stream/{id}` 在巡檢停止時清除
-- **streaming.py 修補**: JPS 需要修補的 `streaming.py` (`deploy/vila-jps/streaming_patched.py`)，在 GStreamer 管線中加入 `h264parse` 以相容 NvMMLite 解碼器
-
-**JPS 限制**：最多 1 個串流 -- 前端使用單選按鈕 (非核取方塊)。
-
-當警報觸發時，後端透過 OpenCV RTSP 從 mediamtx 擷取證據畫面，儲存至磁碟與資料庫，並在設定 Telegram 時傳送通知。
-
-### 反向代理 (nginx)
-
-- **開發環境設定檔**: `nginx.conf` (根目錄)
-- **正式環境設定檔**: `deploy/nginx.conf`
-
-nginx 負責兩項功能：
-1. 直接提供靜態前端資源 (比 Flask 更快)
-2. 根據 URL 路徑將 API 請求路由至對應的後端
-
-### 資料庫 (SQLite)
-
-- **檔案**: `data/report/report.db`
-- **模式**: WAL (Write-Ahead Logging)，支援多程序同時讀寫
-- **忙碌逾時**: 5000ms
-
-所有機器人後端共用同一個資料庫檔案。各資料表中的 `robot_id` 欄位用於區分不同機器人的資料。
-
-## 請求流程
-
-### 機器人專屬請求
-
-```
-瀏覽器:  GET /api/robot-a/state
-    |
-nginx:    正規匹配 ^/api/(robot-a)/(.*)$
-          移除前綴，代理至 http://robot-a:5000/api/state
-    |
-Flask:    處理 /api/state，回傳機器人專屬資料
+    UI --> Nginx --> Docker
+    RobotA --- PerRobot
+    PerRobot --> DB
+    PerRobot --> Settings
+    FH -->|"RTSP 推流"| MTX
+    RM -->|"HTTP"| Relay --> MTX --> VILA
+    Cloud --> Gemini
+    PS -->|"同步"| Supabase
 ```
 
-### 全域請求
+## 請求路由
+
+nginx 使用正則表達式從 URL 提取機器人 ID，代理至對應的 Docker 服務：
 
 ```
-瀏覽器:  GET /api/settings
-    |
-nginx:    落入 /api/ 的通用規則
-          代理至 http://robot-a:5000/api/settings
-    |
-Flask:    從共用 SQLite DB 讀取，回傳設定
+^/api/(robot-[^/]+)/(.*)$  →  http://$robot_svc:5000/api/$api_path
 ```
 
-任何後端都能處理全域請求，因為它們共用同一個資料庫。
+- Docker 服務名稱**必須**與機器人 ID 一致（`robot-a`、`robot-b` 等）
+- 全域端點（`/api/settings`、`/api/robots`、`/api/history`）代理至 `robot-a`，因所有後端共用同一資料庫
+- 新增機器人 = 新增 Docker 服務 + 重啟
 
-## 即時監控資料流
+## 每機器人後端元件
 
+每個 Flask 後端在啟動時初始化以下服務：
+
+### RobotService
+
+- 背景執行緒每 100ms 透過 gRPC 輪詢 Kachaka 機器人
+- 維護快取狀態：電量、位置、地圖圖片、地圖 metadata
+- 提供阻塞式命令方法：`move_to()`、`return_home()`、`cancel_command()`
+- gRPC 斷線時自動重連（2 秒退避）
+- **直接使用 `kachaka_api.KachakaApiClient`**（未使用 `kachaka_core`）
+
+### FrameHub
+
+- 單一 gRPC 輪詢執行緒將攝影機影格存入記憶體快取
+- 為網頁介面提供 MJPEG 串流（`/api/{id}/camera/front`）
+- 按需啟動 ffmpeg 子程序推送 RTSP 串流至 Jetson mediamtx（2 fps）
+- 所有消費者（MJPEG、Gemini 快照、錄影、RTSP 推流）從同一快取讀取
+
+### PatrolService
+
+- 以背景執行緒執行巡檢
+- 每個巡檢點：移動機器人 → 擷取影像 → Gemini 分析 → 儲存結果
+- 支援 turbo 模式（非同步 AI 分析 — 機器人移動同時處理影像）
+- 管理邊緣 AI 生命週期（註冊/註銷串流、WebSocket 連線）
+
+### CloudAIService
+
+- 封裝 Google Gemini API 進行結構化影像分析
+- 每個巡檢點回傳 `{is_ng: bool, description: str}`
+- 產生巡檢報告、Telegram 訊息、多日彙整報告
+- 影片分析（上傳 MP4 → Gemini Files API → 分析）
+- 追蹤每次呼叫的 token 使用量
+
+### EdgeAIService
+
+- 管理 VILA JPS 即時監控整合
+- 向 JPS API 註冊/註銷 RTSP 串流
+- 連接 WebSocket 接收警報事件
+- 將警報存入 `edge_ai_alerts` 資料表
+
+## 影像智慧管線
+
+來自單一攝影機源的三條平行 AI 處理路徑：
+
+```mermaid
+graph TD
+    CAM["機器人攝影機 (gRPC)"] --> FH["FrameHub 快取"]
+
+    FH --> PATH1["① 巡檢點快照"]
+    FH --> PATH2["② 錄影"]
+    FH --> PATH3["③ RTSP 推流 (2fps)"]
+
+    PATH1 -->|"JPEG"| GEMINI1["Gemini：結構化檢查<br/>~3-5 秒/點"]
+    PATH2 -->|"MP4"| GEMINI2["Gemini：影片分析<br/>~5-30 分鐘"]
+    PATH3 --> MTX["mediamtx"] --> VILA["VILA JPS：即時警報<br/>~1-2 秒"]
+
+    GEMINI1 --> DB[(SQLite)]
+    GEMINI2 --> DB
+    VILA -->|"WebSocket"| DB
 ```
-1. 巡檢啟動
-   |-- 機器人攝影機: frame_hub.start_rtsp_push() 以 2fps 直推至 mediamtx /{robot_id}/camera
-   |-- 外部 RTSP: relay_service_client 啟動 Jetson relay 轉碼至 /{robot_id}/external
-   +-- 等待串流就緒 (frame_hub.wait_for_push_ready 或 relay wait_for_stream)
 
-2. LiveMonitor.start()
-   |-- POST /api/v1/live-stream --> 註冊每個串流 --> 取得 stream_id
-   |-- POST /api/v1/alerts --> 為每個串流設定警報規則
-   +-- 啟動 WebSocket 監聽執行緒
+| # | 模式 | 觸發時機 | AI | 延遲 | 輸出 |
+|---|------|---------|-----|------|------|
+| ① | 巡檢點檢查 | 機器人抵達巡檢點 | Gemini（雲端）| ~3-5 秒 | 結構化 JSON (OK/NG) |
+| ② | 影片分析 | 巡檢完成 | Gemini（雲端）| ~5-30 分鐘 | 敘事摘要 |
+| ③ | 即時警報 | 持續監控 | VILA JPS（邊緣端）| ~1-2 秒 | WebSocket 警報 + 照片 |
 
-3. 巡檢期間
-   |-- VILA JPS 拉取 RTSP 串流，持續評估規則
-   |-- 警報觸發 --> WebSocket 事件傳至後端
-   |   |-- 冷卻檢查 (每規則+串流 60 秒)
-   |   |-- 從 mediamtx 擷取證據畫面 (cv2 RTSP)
-   |   |-- 儲存 JPEG 至 data/{robot_id}/report/edge_ai_alerts/
-   |   |-- INSERT INTO edge_ai_alerts (含 stream_source)
-   |   +-- 若已設定 Telegram，傳送照片
-   +-- 警報可透過 /api/{id}/patrol/edge_ai_alerts 在巡檢儀表板查看
+## 資料庫結構
 
-4. 巡檢結束
-   |-- LiveMonitor.stop()
-   |   |-- 關閉 WebSocket
-   |   +-- DELETE /api/v1/live-stream/{id} 取消註冊每個串流
-   |-- relay_service_client.stop_all() --> 停止 Jetson relay ffmpeg
-   |-- frame_hub.stop_rtsp_push()
-   +-- 警報納入 AI 摘要報告
+```mermaid
+erDiagram
+    patrol_runs {
+        INTEGER id PK
+        TEXT start_time
+        TEXT end_time
+        TEXT status
+        TEXT robot_id
+        TEXT report_content
+        INTEGER total_tokens
+    }
+
+    inspection_results {
+        INTEGER id PK
+        INTEGER run_id FK
+        TEXT robot_id
+        TEXT point_name
+        TEXT ai_response
+        INTEGER is_ng
+        TEXT image_path
+    }
+
+    generated_reports {
+        INTEGER id PK
+        TEXT start_date
+        TEXT end_date
+        TEXT report_content
+        TEXT robot_id
+    }
+
+    edge_ai_alerts {
+        INTEGER id PK
+        INTEGER run_id FK
+        TEXT robot_id
+        TEXT rule
+        TEXT response
+        TEXT image_path
+    }
+
+    robots {
+        TEXT robot_id PK
+        TEXT robot_name
+        TEXT robot_ip
+    }
+
+    global_settings {
+        TEXT key PK
+        TEXT value
+    }
+
+    patrol_runs ||--o{ inspection_results : "包含"
+    patrol_runs ||--o{ edge_ai_alerts : "包含"
 ```
-
-## 資料模型
-
-### 每台機器人的資料 (檔案系統)
-
-每台機器人儲存各自的設定與圖片：
-
-```
-data/
-|-- report/
-|   +-- report.db              # 共用資料庫
-|-- robot-a/
-|   |-- config/
-|   |   |-- points.json        # 巡檢點位
-|   |   +-- patrol_schedule.json
-|   +-- report/
-|       |-- images/            # 巡檢照片
-|       |   +-- {run_id}_{timestamp}/
-|       +-- edge_ai_alerts/    # 即時監控證據圖片
-|-- robot-b/
-|   +-- ...
-```
-
-### 共用資料 (資料庫)
-
-詳見 [backend.md](backend.md) 的完整資料庫 schema。
 
 ## 執行緒模型
 
-每個 Flask 後端執行數個背景執行緒：
+```mermaid
+graph TD
+    Main["主執行緒<br/>Flask WSGI"]
+    Poll["RobotService 執行緒<br/>gRPC 輪詢 (100ms)"]
+    FHThread["FrameHub 執行緒<br/>攝影機輪詢"]
+    FFmpeg["ffmpeg 子程序<br/>RTSP 推流"]
+    Patrol["巡檢執行緒<br/>巡檢點執行"]
+    VRThread["錄影執行緒<br/>Frame → MP4"]
+    EdgeWS["EdgeAI 執行緒<br/>WebSocket 監聽"]
 
-| 執行緒 | 用途 | 間隔 |
-|--------|------|------|
-| `_poll_loop` (frame_hub) | gRPC 輪詢攝影機畫面，更新記憶體快取 | 100ms (~10fps) |
-| `_feeder_loop` (frame_hub) | 將快取畫面寫入 ffmpeg stdin (RTSP 推送) | 500ms (2fps) |
-| `_monitor_push` (frame_hub) | 監控 ffmpeg 健康狀態，自動重啟 | 5s |
-| `_polling_loop` (robot_service) | 透過 gRPC 輪詢機器人位置、電量、地圖 | 100ms |
-| `_heartbeat_loop` (app.py) | 更新資料庫中的機器人上線狀態 | 30s |
-| `_schedule_checker` (patrol_service) | 檢查排程巡檢時間 | 30s |
-| `_inspection_worker` (patrol_service) | 處理 AI 巡檢佇列 (turbo 模式) | 事件驅動 |
-| `_record_loop` (video_recorder) | 巡檢期間擷取影片畫面 | 1/fps |
-| `_ws_listener` (edge_ai_service) | 監聽 VILA JPS WebSocket 警報事件 | 持續 |
+    Main -.->|"啟動"| Poll
+    Main -.->|"啟動"| FHThread
+    FHThread -.->|"啟動"| FFmpeg
+    Main -.->|"巡檢開始時啟動"| Patrol
+    Patrol -.->|"啟動"| VRThread
+    Patrol -.->|"啟動"| EdgeWS
+```
+
+所有執行緒均為 daemon 執行緒 — Flask 程序結束時自動退出。
 
 ## 網路模式
 
-### 開發環境 (WSL2 / Docker Desktop)
+| 模式 | 網路 | 端口分配 | 服務名稱解析 |
+|------|------|---------|-------------|
+| 開發 | Docker Bridge | 所有後端 :5000（內部） | Docker DNS |
+| 正式 | Host Network | 每機器人獨立端口（:5001、:5002...） | localhost |
 
-使用 Docker bridge 網路：
+## 設定系統
 
-- nginx 綁定 `ports: 5000:5000`
-- mediamtx 綁定 `ports: 8554:8554`
-- 所有 Flask 後端在內部監聽 port 5000
-- nginx 透過 Docker DNS (`resolver 127.0.0.11`) 解析後端主機名稱
-- Docker 服務名稱必須與 `ROBOT_ID` 值一致 (例：服務 `robot-a` = `ROBOT_ID=robot-a`)
-- `RELAY_SERVICE_URL` 指向 Jetson relay 服務 (例：`http://192.168.50.35:5020`)
+設定儲存於 SQLite（`global_settings` 資料表），透過網頁介面管理：
 
-### 正式環境 (Jetson / Linux 主機)
+| 類別 | 設定項 |
+|------|--------|
+| 一般 | 時區、turbo 模式、閒置串流、Telegram 設定 |
+| Gemini AI | API 金鑰、模型、系統提示、報告提示、影片提示 |
+| VILA / 邊緣 AI | 啟用、串流來源、Jetson 主機、RTSP URL、警報規則 |
 
-使用 host 網路 (`network_mode: host`)：
+每機器人設定透過 `docker-compose.yml` 環境變數配置：
 
-- 所有容器共用主機網路堆疊
-- nginx 監聽 port 5000
-- 每個 Flask 後端透過 `PORT` 環境變數使用不同的連接埠 (5001, 5002, ...)
-- mediamtx RTSP port 可透過 `MTX_RTSPADDRESS` 設定 (預設 8554，若有衝突使用 8555)
-- nginx 透過明確的代理規則將 robot ID 路由至 `127.0.0.1:PORT`
-- `RELAY_SERVICE_URL=http://localhost:5020` (relay 服務在同一台 Jetson 上)
+| 變數 | 用途 |
+|------|------|
+| `ROBOT_ID` | 機器人識別碼（必須與 Docker 服務名稱一致） |
+| `ROBOT_NAME` | 顯示名稱 |
+| `ROBOT_IP` | Kachaka 機器人 IP:port |
+| `PORT` | Flask 監聽端口（預設 5000，正式環境每台獨立） |
+| `RELAY_SERVICE_URL` | Jetson relay 服務 URL |
 
-詳見 [deployment.md](deployment.md)。
+## 雲端同步 (Supabase)
 
-## 安全性
+選配功能，將巡檢資料同步至 Supabase 以供跨裝置存取：
 
-- nginx 加入安全標頭：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`
-- 敏感設定 (API 金鑰、Telegram token) 在 GET 回應中遮罩 (`****` 前綴)
-- Robot ID 路徑參數驗證格式 `^robot-[a-z0-9-]+$`
-- 圖片服務在建構檔案路徑前驗證 robot ID 格式
-- Docker 以非 root 使用者執行 Flask (`appuser`, UID 1000)
-- `entrypoint.sh` 使用 `gosu` 在修正磁碟區權限後降低權限
+- 巡檢記錄、檢查結果、機器人狀態在每次巡檢後同步
+- 雲端儀表板部署於 Vercel（`cloud-dashboard/`）
+- 透過 `SUPABASE_URL` 和 `SUPABASE_KEY` 環境變數配置
+
+## CI/CD
+
+GitHub Actions 在每次推送至 `main` 時建置多架構 Docker 映像：
+
+- 平台：`linux/amd64`、`linux/arm64`
+- Registry：`ghcr.io/sigmarobotics/visual-patrol`
+- Relay service 映像有獨立的建置工作流程
