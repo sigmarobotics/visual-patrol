@@ -30,3 +30,5 @@ logs/
 # Docker
 docker-compose.override.yml
 .vercel
+
+docs/plans/
