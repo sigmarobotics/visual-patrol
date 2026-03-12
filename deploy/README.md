@@ -7,8 +7,8 @@ See the full [Deployment Guide](../docs/deployment.md) for setup instructions, m
 ```bash
 mkdir -p ~/visual-patrol && cd ~/visual-patrol
 
-curl -LO https://raw.githubusercontent.com/sigma-snaken/visual-patrol/main/deploy/docker-compose.prod.yaml
-curl -LO https://raw.githubusercontent.com/sigma-snaken/visual-patrol/main/deploy/nginx.conf
+curl -LO https://raw.githubusercontent.com/sigmarobotics/visual-patrol/main/deploy/docker-compose.prod.yaml
+curl -LO https://raw.githubusercontent.com/sigmarobotics/visual-patrol/main/deploy/nginx.conf
 
 vim docker-compose.prod.yaml   # Edit robot IPs and ports
 
@@ -28,7 +28,7 @@ docker compose -f docker-compose.prod.yaml up -d
 CI builds multi-arch images to GHCR. Pull and run:
 
 ```bash
-docker pull ghcr.io/sigma-snaken/visual-patrol-relay:latest
+docker pull ghcr.io/sigmarobotics/visual-patrol-relay:latest
 docker compose -f deploy/docker-compose.prod.yaml up -d rtsp-relay
 ```
 

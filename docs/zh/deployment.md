@@ -21,7 +21,7 @@ Visual Patrol 支援兩種部署模式：
 ### 快速開始
 
 ```bash
-git clone https://github.com/sigma-snaken/visual-patrol.git
+git clone https://github.com/sigmarobotics/visual-patrol.git
 cd visual-patrol
 
 # 在 docker-compose.yml 中編輯機器人 IP
@@ -109,8 +109,8 @@ export RELAY_SERVICE_URL=http://192.168.50.35:5020
 mkdir -p ~/visual-patrol && cd ~/visual-patrol
 
 # 下載設定檔
-curl -LO https://raw.githubusercontent.com/sigma-snaken/visual-patrol/main/deploy/docker-compose.prod.yaml
-curl -LO https://raw.githubusercontent.com/sigma-snaken/visual-patrol/main/deploy/nginx.conf
+curl -LO https://raw.githubusercontent.com/sigmarobotics/visual-patrol/main/deploy/docker-compose.prod.yaml
+curl -LO https://raw.githubusercontent.com/sigmarobotics/visual-patrol/main/deploy/nginx.conf
 
 # 編輯機器人 IP 及其他設定
 vim docker-compose.prod.yaml
@@ -128,7 +128,7 @@ docker compose -f docker-compose.prod.yaml up -d
 - nginx 在主機 port 5000 監聽
 - 每個 Flask 後端透過 `PORT` 環境變數監聽不同連接埠 (5001, 5002, ...)
 - nginx 透過比對 URL 中的 robot ID 路由至對應的連接埠
-- 映像從 `ghcr.io/sigma-snaken/visual-patrol:latest` 拉取
+- 映像從 `ghcr.io/sigmarobotics/visual-patrol:latest` 拉取
 - 所有服務使用 `RELAY_SERVICE_URL=http://localhost:5020` (relay service 在同一台主機)
 - relay service (`rtsp-relay`) 已包含在 prod compose 檔中
 
@@ -152,7 +152,7 @@ mediamtx 在 port `8555` 監聽 RTSP 連線。frame_hub 的 ffmpeg 推送和 rel
 
 ### RTSP Relay Service (Jetson)
 
-Relay service 是 Jetson 端的元件，處理所有 ffmpeg 影像轉碼。與 mediamtx 和 VILA JPS 一起在 Jetson 上執行。CI 自動建置多架構映像至 `ghcr.io/sigma-snaken/visual-patrol-relay:latest`。
+Relay service 是 Jetson 端的元件，處理所有 ffmpeg 影像轉碼。與 mediamtx 和 VILA JPS 一起在 Jetson 上執行。CI 自動建置多架構映像至 `ghcr.io/sigmarobotics/visual-patrol-relay:latest`。
 
 **為什麼需要？** 在 Jetson 上執行 ffmpeg 轉碼，而非在 Flask 容器中：
 - 所有串流轉碼為乾淨的 H264 Baseline profile (NvMMLite 硬體解碼器要求)
@@ -181,7 +181,7 @@ VP Flask (開發/Jetson)             Jetson (host networking)
 ```yaml
   rtsp-relay:
     container_name: visual_patrol_rtsp_relay
-    image: ghcr.io/sigma-snaken/visual-patrol-relay:latest
+    image: ghcr.io/sigmarobotics/visual-patrol-relay:latest
     network_mode: host
     runtime: nvidia
     volumes:
@@ -200,7 +200,7 @@ VP Flask (開發/Jetson)             Jetson (host networking)
 
 ```bash
 # 拉取 CI 建置的映像
-docker pull ghcr.io/sigma-snaken/visual-patrol-relay:latest
+docker pull ghcr.io/sigmarobotics/visual-patrol-relay:latest
 
 # 執行
 docker rm -f visual_patrol_rtsp_relay 2>/dev/null
@@ -212,7 +212,7 @@ docker run -d --name visual_patrol_rtsp_relay \
   -e USE_NVENC=false \
   -e RELAY_FPS=2 \
   --restart=unless-stopped \
-  ghcr.io/sigma-snaken/visual-patrol-relay:latest
+  ghcr.io/sigmarobotics/visual-patrol-relay:latest
 ```
 
 **環境變數：**
@@ -283,7 +283,7 @@ cd /code/vila-jps && docker compose restart jps_vlm
 ```yaml
   robot-b:
     container_name: visual_patrol_robot_b
-    image: ghcr.io/sigma-snaken/visual-patrol:latest
+    image: ghcr.io/sigmarobotics/visual-patrol:latest
     network_mode: host
     volumes:
       - ./data:/app/data
@@ -366,13 +366,13 @@ curl http://localhost:5000/api/edge_ai/health
 CI pipeline (`.github/workflows/docker-publish.yaml`) 在每次推送至 `main` 時自動建置多架構映像：
 
 - **平台：** `linux/amd64`、`linux/arm64`
-- **Registry：** `ghcr.io/sigma-snaken/visual-patrol`
+- **Registry：** `ghcr.io/sigmarobotics/visual-patrol`
 - **標籤：** `latest` (main 分支)、`main`、`v1.0.0` (semver 標籤)
 - **快取：** GitHub Actions cache (`type=gha`)
 
 建置兩個映像：
-- `ghcr.io/sigma-snaken/visual-patrol:latest` -- 主應用程式 (Flask + 前端)
-- `ghcr.io/sigma-snaken/visual-patrol-relay:latest` -- Relay service (ffmpeg 轉碼)
+- `ghcr.io/sigmarobotics/visual-patrol:latest` -- 主應用程式 (Flask + 前端)
+- `ghcr.io/sigmarobotics/visual-patrol-relay:latest` -- Relay service (ffmpeg 轉碼)
 
 ### 手動建置
 

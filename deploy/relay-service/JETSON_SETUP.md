@@ -43,7 +43,7 @@ CI 自動建置多架構 (amd64 + arm64) 映像至 GHCR：
 
 ```bash
 # 拉取最新映像
-docker pull ghcr.io/sigma-snaken/visual-patrol-relay:latest
+docker pull ghcr.io/sigmarobotics/visual-patrol-relay:latest
 
 # 啟動（首次或更新）
 docker rm -f visual_patrol_rtsp_relay 2>/dev/null
@@ -54,7 +54,7 @@ docker run -d --name visual_patrol_rtsp_relay \
   -e MEDIAMTX_HOST=localhost:8555 \
   -e USE_NVENC=false \
   --restart=unless-stopped \
-  ghcr.io/sigma-snaken/visual-patrol-relay:latest
+  ghcr.io/sigmarobotics/visual-patrol-relay:latest
 ```
 
 > **關於 NVENC**: 目前 CI 使用 `python:3.10-slim` 基礎映像，不含 Jetson GPU 支援。
@@ -134,7 +134,7 @@ curl -X POST http://localhost:5020/relays/stop_all
 
 ```bash
 # 拉取最新映像（CI 自動建置）
-docker pull ghcr.io/sigma-snaken/visual-patrol-relay:latest
+docker pull ghcr.io/sigmarobotics/visual-patrol-relay:latest
 
 # 重新啟動
 docker rm -f visual_patrol_rtsp_relay
@@ -145,7 +145,7 @@ docker run -d --name visual_patrol_rtsp_relay \
   -e MEDIAMTX_HOST=localhost:8555 \
   -e USE_NVENC=false \
   --restart=unless-stopped \
-  ghcr.io/sigma-snaken/visual-patrol-relay:latest
+  ghcr.io/sigmarobotics/visual-patrol-relay:latest
 
 # 更新 JPS patch（如有更新）
 cd /code/visual-patrol && git pull

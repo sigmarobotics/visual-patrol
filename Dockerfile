@@ -1,5 +1,5 @@
 FROM python:3.10-slim
-LABEL org.opencontainers.image.source=https://github.com/sigma-snaken/visual-patrol
+LABEL org.opencontainers.image.source=https://github.com/sigmarobotics/visual-patrol
 # Prevent Python from writing pyc files to disc
 ENV PYTHONDONTWRITEBYTECODE=1
 # Prevent Python from buffering stdout and stderr

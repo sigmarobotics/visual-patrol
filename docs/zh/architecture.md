@@ -78,7 +78,7 @@ Visual Patrol 是一套多機器人自主巡檢系統。透過網頁單頁應用
 1. **機器人攝影機 (直推)**: frame_hub gRPC 輪詢 --> 畫面快取 --> ffmpeg 推送 (2fps) --> mediamtx `/{robot_id}/camera` --> VILA JPS（不經過 relay）
 2. **外部 RTSP (經 relay 轉碼)**: 來源 RTSP --> relay 服務 ffmpeg 轉碼 (H264 Baseline) --> RTSP 推送至 mediamtx `/{robot_id}/external` --> VILA JPS
 
-Relay 服務 (`relay_service.py`, port 5020) 是 Jetson 上的獨立 Flask 應用程式，僅用於外部 RTSP 轉碼。CI 建置映像至 `ghcr.io/sigma-snaken/visual-patrol-relay:latest`。
+Relay 服務 (`relay_service.py`, port 5020) 是 Jetson 上的獨立 Flask 應用程式，僅用於外部 RTSP 轉碼。CI 建置映像至 `ghcr.io/sigmarobotics/visual-patrol-relay:latest`。
 
 VILA JPS 從 mediamtx 拉取 RTSP 串流進行持續 VLM 分析。
 

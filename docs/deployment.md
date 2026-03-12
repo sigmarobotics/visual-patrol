@@ -21,7 +21,7 @@ Visual Patrol supports two deployment modes:
 ### Quick Start
 
 ```bash
-git clone https://github.com/sigma-snaken/visual-patrol.git
+git clone https://github.com/sigmarobotics/visual-patrol.git
 cd visual-patrol
 
 # Edit robot IPs in docker-compose.yml
@@ -109,8 +109,8 @@ No need to clone the repository. Only two config files are needed:
 mkdir -p ~/visual-patrol && cd ~/visual-patrol
 
 # Download config files
-curl -LO https://raw.githubusercontent.com/sigma-snaken/visual-patrol/main/deploy/docker-compose.prod.yaml
-curl -LO https://raw.githubusercontent.com/sigma-snaken/visual-patrol/main/deploy/nginx.conf
+curl -LO https://raw.githubusercontent.com/sigmarobotics/visual-patrol/main/deploy/docker-compose.prod.yaml
+curl -LO https://raw.githubusercontent.com/sigmarobotics/visual-patrol/main/deploy/nginx.conf
 
 # Edit robot IP and other settings
 vim docker-compose.prod.yaml
@@ -128,7 +128,7 @@ The `data/` and `logs/` directories are created automatically on first start.
 - nginx listens on port 5000 on the host
 - Each Flask backend listens on a unique port via `PORT` env var (5001, 5002, ...)
 - nginx routes by matching robot IDs in the URL to specific ports
-- Images are pulled from `ghcr.io/sigma-snaken/visual-patrol:latest`
+- Images are pulled from `ghcr.io/sigmarobotics/visual-patrol:latest`
 - All services use `RELAY_SERVICE_URL=http://localhost:5020` (relay service on same host)
 - The relay service (`rtsp-relay`) is included in the prod compose file alongside robot services
 
@@ -152,7 +152,7 @@ mediamtx listens on port `8555` for RTSP connections. Both the frame_hub ffmpeg 
 
 ### RTSP Relay Service (Jetson)
 
-The relay service is a Jetson-side component that handles all ffmpeg video transcoding. It runs alongside mediamtx and VILA JPS on the Jetson. CI automatically builds multi-arch images to `ghcr.io/sigma-snaken/visual-patrol-relay:latest`.
+The relay service is a Jetson-side component that handles all ffmpeg video transcoding. It runs alongside mediamtx and VILA JPS on the Jetson. CI automatically builds multi-arch images to `ghcr.io/sigmarobotics/visual-patrol-relay:latest`.
 
 **Why?** Running ffmpeg on Jetson instead of in the Flask container provides:
 - All streams transcoded to clean H264 Baseline profile (required for NvMMLite hardware decoder)
@@ -181,7 +181,7 @@ The `rtsp-relay` service is included in `deploy/docker-compose.prod.yaml`:
 ```yaml
   rtsp-relay:
     container_name: visual_patrol_rtsp_relay
-    image: ghcr.io/sigma-snaken/visual-patrol-relay:latest
+    image: ghcr.io/sigmarobotics/visual-patrol-relay:latest
     network_mode: host
     runtime: nvidia
     volumes:
@@ -200,7 +200,7 @@ The `rtsp-relay` service is included in `deploy/docker-compose.prod.yaml`:
 
 ```bash
 # Pull CI-built image
-docker pull ghcr.io/sigma-snaken/visual-patrol-relay:latest
+docker pull ghcr.io/sigmarobotics/visual-patrol-relay:latest
 
 # Run
 docker rm -f visual_patrol_rtsp_relay 2>/dev/null
@@ -212,7 +212,7 @@ docker run -d --name visual_patrol_rtsp_relay \
   -e USE_NVENC=false \
   -e RELAY_FPS=2 \
   --restart=unless-stopped \
-  ghcr.io/sigma-snaken/visual-patrol-relay:latest
+  ghcr.io/sigmarobotics/visual-patrol-relay:latest
 ```
 
 **Environment Variables:**
@@ -283,7 +283,7 @@ cd /code/vila-jps && docker compose restart jps_vlm
 ```yaml
   robot-b:
     container_name: visual_patrol_robot_b
-    image: ghcr.io/sigma-snaken/visual-patrol:latest
+    image: ghcr.io/sigmarobotics/visual-patrol:latest
     network_mode: host
     volumes:
       - ./data:/app/data
@@ -382,13 +382,13 @@ curl http://localhost:5000/api/edge_ai/health
 The CI pipeline (`.github/workflows/docker-publish.yaml`) automatically builds multi-architecture images on every push to `main`:
 
 - **Platforms:** `linux/amd64`, `linux/arm64`
-- **Registry:** `ghcr.io/sigma-snaken/visual-patrol`
+- **Registry:** `ghcr.io/sigmarobotics/visual-patrol`
 - **Tags:** `latest` (main branch), `main`, `v1.0.0` (semver tags)
 - **Cache:** GitHub Actions cache (`type=gha`)
 
 Two images are built:
-- `ghcr.io/sigma-snaken/visual-patrol:latest` -- Main application (Flask + frontend)
-- `ghcr.io/sigma-snaken/visual-patrol-relay:latest` -- Relay service (ffmpeg transcoding)
+- `ghcr.io/sigmarobotics/visual-patrol:latest` -- Main application (Flask + frontend)
+- `ghcr.io/sigmarobotics/visual-patrol-relay:latest` -- Relay service (ffmpeg transcoding)
 
 ### Manual Build
 
