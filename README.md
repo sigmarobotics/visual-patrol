@@ -1,6 +1,26 @@
 # Visual Patrol
 
-> **Note:** This project uses `kachaka_api.KachakaApiClient` directly instead of the [`kachaka-sdk-toolkit`](https://github.com/sigmarobotics/kachaka-sdk-toolkit) (`kachaka_core`) best practices — no connection pooling, no `@with_retry`, no `CameraStreamer`, no `RobotController`. A migration to `kachaka_core` is planned.
+> [!WARNING]
+> **本專案的機器人連線方式不值得參考。** 這裡直接使用 `kachaka_api.KachakaApiClient` 操作 gRPC，屬於早期開發的 legacy 寫法，存在以下問題：
+>
+> - **無連線池** — 每個 client 各自建立 gRPC channel，多機器人場景下資源浪費
+> - **手動重試邏輯** — 自行撰寫三階段 retry loop（送出→確認→輪詢），約 40 行樣板程式碼
+> - **手動 threading + Lock** — 自行管理 polling thread、共享 state dict、threading.Lock()
+> - **直接操作 protobuf** — 消費端必須理解 `.success`、`.error_code`、`.data` 等 protobuf 屬性
+>
+> 推薦使用 [`kachaka-sdk-toolkit`](https://github.com/sigmarobotics/kachaka-sdk-toolkit)（`kachaka_core`），它針對上述問題提供了：
+>
+> | 面向 | 原始 gRPC | kachaka_core |
+> |------|----------|-------------|
+> | **連線管理** | 手動建立 `KachakaApiClient(ip)` | `KachakaConnection.get(ip)` — 連線池化、執行緒安全、自動重連 |
+> | **重試機制** | 自寫 while loop + sleep | `@with_retry` 裝飾器，指數退避 |
+> | **指令輪詢** | 手動 `is_command_running()` 迴圈 | `poll_until_complete(timeout)` 一行完成 |
+> | **狀態查詢** | 回傳 protobuf 物件 | 統一回傳 dict（`{"ok": True, "x": 1.5, ...}`） |
+> | **相機串流** | 自行在迴圈中呼叫 `get_front_camera_image()` | `CameraStreamer` 背景執行緒 + frame cache |
+> | **巡邏編排** | 自行控制移動/拍照/分析流程 | `RobotController` 多步驟序列 + metrics |
+> | **名稱解析** | 手動呼叫 `update_resolver()` | `KachakaConnection` 自動管理 |
+>
+> 本專案計劃遷移至 `kachaka_core`，新專案請直接使用 SDK toolkit。
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Flask](https://img.shields.io/badge/Flask-3.x-green)
