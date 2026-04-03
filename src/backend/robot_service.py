@@ -10,6 +10,8 @@ POLL_INTERVAL = 0.1
 RECONNECT_WAIT = 2.0
 SEND_RETRY_INTERVAL = 2.0
 COMMAND_POLL_INTERVAL = 0.5
+MOVE_SEND_TIMEOUT = 30      # max seconds to retry sending a move command
+MOVE_POLL_TIMEOUT = 120     # max seconds to wait for a move to complete
 
 
 class RobotService:
@@ -104,14 +106,19 @@ class RobotService:
         Phase 2: Poll is_command_running() until done (never re-sends move).
         Phase 3: Try to get result, fail gracefully.
         """
-        # Phase 1: send command
-        while True:
+        # Phase 1: send command (with timeout)
+        deadline = time.monotonic() + MOVE_SEND_TIMEOUT
+        result = None
+        while time.monotonic() < deadline:
             try:
                 result = self.client.move_to_pose(x, y, theta, wait_for_completion=False)
                 break
             except Exception as e:
                 logger.warning(f"move_to (send): {e}")
                 time.sleep(SEND_RETRY_INTERVAL)
+        else:
+            logger.error(f"move_to (send): timed out after {MOVE_SEND_TIMEOUT}s")
+            return None
 
         if not wait:
             return result
@@ -127,13 +134,16 @@ class RobotService:
                 logger.warning(f"move_to (accept): {e}")
             time.sleep(COMMAND_POLL_INTERVAL)
 
-        while True:
+        deadline = time.monotonic() + MOVE_POLL_TIMEOUT
+        while time.monotonic() < deadline:
             try:
                 if not self.client.is_command_running():
                     break
             except Exception as e:
                 logger.warning(f"move_to (poll): {e}")
             time.sleep(COMMAND_POLL_INTERVAL)
+        else:
+            logger.error(f"move_to (poll): timed out after {MOVE_POLL_TIMEOUT}s")
 
         # Phase 3: get result
         try:
@@ -146,14 +156,18 @@ class RobotService:
 
     def return_home(self):
         """Return to charging dock. Same two-phase pattern as move_to."""
-        # Phase 1: send command
-        while True:
+        # Phase 1: send command (with timeout)
+        deadline = time.monotonic() + MOVE_SEND_TIMEOUT
+        while time.monotonic() < deadline:
             try:
                 self.client.return_home(wait_for_completion=False)
                 break
             except Exception as e:
                 logger.warning(f"return_home (send): {e}")
                 time.sleep(SEND_RETRY_INTERVAL)
+        else:
+            logger.error(f"return_home (send): timed out after {MOVE_SEND_TIMEOUT}s")
+            return None
 
         # Phase 2: wait for command acceptance, then poll for completion
         for _ in range(20):
@@ -164,13 +178,16 @@ class RobotService:
                 logger.warning(f"return_home (accept): {e}")
             time.sleep(COMMAND_POLL_INTERVAL)
 
-        while True:
+        deadline = time.monotonic() + MOVE_POLL_TIMEOUT
+        while time.monotonic() < deadline:
             try:
                 if not self.client.is_command_running():
                     break
             except Exception as e:
                 logger.warning(f"return_home (poll): {e}")
             time.sleep(COMMAND_POLL_INTERVAL)
+        else:
+            logger.error(f"return_home (poll): timed out after {MOVE_POLL_TIMEOUT}s")
 
         # Phase 3: get result
         try:
