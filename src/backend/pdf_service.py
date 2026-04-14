@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
@@ -294,7 +294,7 @@ def convert_inline_markdown(text):
     return text
 
 
-def parse_markdown_table(lines, styles):
+def parse_markdown_table(lines, styles, page_width=None):
     """Parse markdown table lines into a ReportLab Table"""
     if not lines:
         return None
@@ -336,26 +336,68 @@ def parse_markdown_table(lines, styles):
     if not data:
         return None
 
+    # Normalize row lengths — pad short rows with empty cells to match the widest row
+    num_cols = len(col_max_chars)
+    for row in data:
+        while len(row) < num_cols:
+            row.append(Paragraph("", styles['MDTableCell']))
+
     # Calculate column widths
     # Total available width = A4 width - margins (approx 170mm)
-    total_width = 170 * mm
-    num_cols = len(col_max_chars)
+    total_width = page_width or (170 * mm)
 
     if num_cols == 0:
         return None
 
-    # Heuristic: distribute width based on content length relative to total
-    total_chars = sum(col_max_chars) or 1
+    # Smart column width: narrow columns (≤5 chars, e.g. O/X/numbers) get fixed
+    # small width; remaining space goes to text-heavy columns proportionally.
+    NARROW_THRESHOLD = 5   # max chars to classify as "narrow"
+    NARROW_WIDTH = 9 * mm  # fixed width for narrow columns
+    font_size = 8 if num_cols > 6 else 9
+
+    narrow_cols = set()
+    for j in range(num_cols):
+        if col_max_chars[j] <= NARROW_THRESHOLD:
+            narrow_cols.add(j)
+
+    narrow_total = len(narrow_cols) * NARROW_WIDTH
+    wide_remaining = total_width - narrow_total
+
+    # Distribute remaining width among wide columns by content weight
+    wide_weights = {}
+    for j in range(num_cols):
+        if j not in narrow_cols:
+            # CJK-aware weight: CJK chars count double
+            weight = 0
+            for row in data:
+                if j < len(row):
+                    cell_text = row[j].text if hasattr(row[j], 'text') else ''
+                    clean = re.sub(r'<[^>]+>', '', cell_text)
+                    cw = sum(2 if ord(ch) > 0x2E80 else 1 for ch in clean)
+                    weight = max(weight, cw)
+            wide_weights[j] = max(weight, 1)
+
+    total_wide_weight = sum(wide_weights.values()) or 1
+
     col_widths = []
-    for count in col_max_chars:
-        # Min width 15mm, but respect total
-        w = (count / total_chars) * total_width
-        col_widths.append(w)
+    for j in range(num_cols):
+        if j in narrow_cols:
+            col_widths.append(NARROW_WIDTH)
+        else:
+            w = (wide_weights[j] / total_wide_weight) * wide_remaining
+            col_widths.append(max(w, 15 * mm))
+
+    # Safety: if total exceeds page, scale down
+    total_calculated = sum(col_widths)
+    if total_calculated > total_width:
+        scale = total_width / total_calculated
+        col_widths = [w * scale for w in col_widths]
 
     table = Table(data, colWidths=col_widths)
 
     # Style the table
     # Header row background
+    narrow_align_cols = sorted(narrow_cols)
     tbl_style = [
         ('BACKGROUND', (0, 0), (-1, 0), AMBER),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -363,17 +405,22 @@ def parse_markdown_table(lines, styles):
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
         ('FONTNAME', (0, 0), (-1, -1), CJK_FONT),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('FONTSIZE', (0, 0), (-1, -1), font_size),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
     ]
+    # Center-align narrow columns (O/X, numbers)
+    for j in narrow_align_cols:
+        tbl_style.append(('ALIGN', (j, 1), (j, -1), 'CENTER'))
 
     table.setStyle(TableStyle(tbl_style))
 
     return table
 
 
-def markdown_to_flowables(markdown_text, styles):
+def markdown_to_flowables(markdown_text, styles, page_width=None):
     """
     Convert markdown text to ReportLab flowables.
 
@@ -402,7 +449,7 @@ def markdown_to_flowables(markdown_text, styles):
                 table_lines.append(lines[i].strip())
                 i += 1
 
-            table_flowable = parse_markdown_table(table_lines, styles)
+            table_flowable = parse_markdown_table(table_lines, styles, page_width=page_width)
             if table_flowable:
                 flowables.append(table_flowable)
                 flowables.append(Spacer(1, 3*mm))
@@ -745,6 +792,7 @@ def _build_analysis_token_table(story, styles, period_tokens, report_tokens):
 def generate_analysis_report(content, start_date, end_date, period_tokens=None, report_tokens=None):
     """
     Generate PDF from markdown content for multi-day analysis report.
+    Uses landscape orientation to accommodate wide inspection tables.
 
     Args:
         content: Markdown formatted report content
@@ -757,9 +805,10 @@ def generate_analysis_report(content, start_date, end_date, period_tokens=None, 
         PDF bytes
     """
     buffer = io.BytesIO()
+    page_size = landscape(A4)
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4,
+        pagesize=page_size,
         rightMargin=20*mm,
         leftMargin=20*mm,
         topMargin=20*mm,
@@ -793,8 +842,11 @@ def generate_analysis_report(content, start_date, end_date, period_tokens=None, 
     # === Report Content (Markdown) ===
     story.append(Paragraph("Analysis Report", styles['SectionHeader']))
 
+    # Available content width = page width - left margin - right margin
+    content_width = page_size[0] - 40 * mm
+
     if content:
-        md_flowables = markdown_to_flowables(content, styles)
+        md_flowables = markdown_to_flowables(content, styles, page_width=content_width)
         story.extend(md_flowables)
     else:
         story.append(Paragraph("No content.", styles['CJKNormal']))
@@ -805,8 +857,8 @@ def generate_analysis_report(content, start_date, end_date, period_tokens=None, 
         page_num = canvas.getPageNumber()
         canvas.setFont(CJK_FONT, 8)
         canvas.setFillColor(MUTED_TEXT)
-        canvas.drawCentredString(A4[0] / 2, 15*mm, f"Page {page_num}")
-        canvas.drawCentredString(A4[0] / 2, 10*mm, f"VISUAL PATROL System - Analysis Report ({start_date} to {end_date})")
+        canvas.drawCentredString(page_size[0] / 2, 15*mm, f"Page {page_num}")
+        canvas.drawCentredString(page_size[0] / 2, 10*mm, f"VISUAL PATROL System - Analysis Report ({start_date} to {end_date})")
         canvas.restoreState()
 
     doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
